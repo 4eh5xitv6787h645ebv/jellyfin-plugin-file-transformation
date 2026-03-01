@@ -47,14 +47,14 @@ namespace Jellyfin.Plugin.FileTransformation
 
         private IFileProvider GetFileTransformationFileProvider(IServerConfigurationManager serverConfigurationManager, IApplicationBuilder mainApplicationBuilder)
         {
-            var readService = mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
-            var transformationLogger = mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
+            IWebFileTransformationReadService? readService = mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
+            IFileTransformationLogger? transformationLogger = mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
 
-            if (readService is null || transformationLogger is null)
+            if (readService == null || transformationLogger == null)
             {
                 // Services were not registered — likely the plugin was disabled during type validation
                 // or RegisterServices was not called. Fall back to default file provider.
-                var fallbackLogger = mainApplicationBuilder.ApplicationServices.GetService<ILoggerFactory>()
+                ILogger? fallbackLogger = mainApplicationBuilder.ApplicationServices.GetService<ILoggerFactory>()
                     ?.CreateLogger(typeof(PluginServiceRegistrator).FullName ?? typeof(PluginServiceRegistrator).Name);
                 fallbackLogger?.LogWarning(
                     "[FileTransformation] IWebFileTransformationReadService or IFileTransformationLogger not found in DI container. " +
