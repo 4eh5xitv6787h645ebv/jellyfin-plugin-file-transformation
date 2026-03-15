@@ -27,11 +27,7 @@ namespace Jellyfin.Plugin.FileTransformation
 
             logger?.LogInformation("[FileTransformation] ModuleInitializer complete. Setting up delegates...");
 
-            // Reset delegates to null first to support in-process server restarts.
-            // The setter throws AccessViolationException if the value is already non-null.
-            StartupHelper.WebDefaultFilesFileProvider = null;
             StartupHelper.WebDefaultFilesFileProvider = GetFileTransformationFileProvider;
-            StartupHelper.WebStaticFilesFileProvider = null;
             StartupHelper.WebStaticFilesFileProvider = GetFileTransformationFileProvider;
 
             logger?.LogInformation("[FileTransformation] Delegates set. Registering DI services...");
