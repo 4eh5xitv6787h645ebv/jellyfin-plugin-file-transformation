@@ -10,9 +10,17 @@ namespace Jellyfin.Plugin.FileTransformation
     public class ModuleInitializer
     {
         private static Dictionary<string, Assembly> s_dynamicAssemblies = new Dictionary<string, Assembly>();
+        private static bool s_initialized = false;
         
         public static void Initialize(IApplicationPaths? applicationPaths = null, ILogger? logger = null)
         {
+            if (s_initialized)
+            {
+                logger?.LogInformation("ModuleInitializer already initialized in this process. Skipping re-initialization.");
+                return;
+            }
+
+            s_initialized = true;
             Assembly assembly = typeof(FileTransformationPlugin).Assembly;
             AssemblyLoadContext assemblyLoadContext = new AssemblyLoadContext("Jellyfin.Plugin.FileTransformation");
             string[] resources = assembly.GetManifestResourceNames();

@@ -1,4 +1,4 @@
-﻿using System.Net.Mime;
+using System.Net.Mime;
 using System.Reflection;
 using Jellyfin.Plugin.FileTransformation.Attributes;
 using Jellyfin.Plugin.FileTransformation.Extensions;
@@ -30,35 +30,13 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
         public static FileProviderInstanceDelegate? WebDefaultFilesFileProvider
         {
             get => s_webDefaultFilesFileProvider;
-            set
-            {
-                // We only allow these to be set once.
-                if (s_webDefaultFilesFileProvider == null || value == null)
-                {
-                    s_webDefaultFilesFileProvider = value;
-                }
-                else
-                {
-                    throw new AccessViolationException($"Cannot set {nameof(WebDefaultFilesFileProvider)} as it has already been set by assembly '{s_webDefaultFilesFileProvider.Method.DeclaringType?.Assembly.FullName}'.");
-                }
-            }
+            set => s_webDefaultFilesFileProvider = value;
         }
         
         public static FileProviderInstanceDelegate? WebStaticFilesFileProvider
         {
             get => s_webStaticFilesFileProvider;
-            set
-            {
-                // We only allow these to be set once.
-                if (s_webStaticFilesFileProvider == null || value == null)
-                {
-                    s_webStaticFilesFileProvider = value;
-                }
-                else
-                {
-                    throw new AccessViolationException($"Cannot set {nameof(WebStaticFilesFileProvider)} as it has already been set by assembly '{s_webStaticFilesFileProvider.Method.DeclaringType?.Assembly.FullName}'.");
-                }
-            }
+            set => s_webStaticFilesFileProvider = value;
         }
 
         // When updating Jellyfin version ensure this function is updated to match the targeted version of Jellyfin.
