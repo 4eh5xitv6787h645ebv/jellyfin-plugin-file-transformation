@@ -39,16 +39,15 @@ namespace Jellyfin.Plugin.FileTransformation
 
             logger?.LogInformation("[FileTransformation] Delegates set. Registering DI services...");
 
-            // Create instances eagerly so they are available to the Harmony prefix
+            // Create fresh instances eagerly so they are available to the Harmony prefix
             // on Startup.Configure() even if the DI container hasn't been built yet.
+            // Always recreate (not ??=) so in-process restarts get a clean state and
+            // stale transformations from a previous host build don't persist.
             if (loggerFactory != null)
             {
-                s_transformationLogger ??= new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
-                s_transformationService ??= new WebFileTransformationService(s_transformationLogger);
-            }
+                s_transformationLogger = new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
+                s_transformationService = new WebFileTransformationService(s_transformationLogger);
 
-            if (s_transformationService != null && s_transformationLogger != null)
-            {
                 // Register the pre-created instances so DI consumers get the same singletons.
                 serviceCollection.AddSingleton<WebFileTransformationService>(s_transformationService);
                 serviceCollection.AddSingleton<IWebFileTransformationReadService>(s_transformationService);
@@ -57,7 +56,8 @@ namespace Jellyfin.Plugin.FileTransformation
             }
             else
             {
-                // Fallback: let DI create the instances (original behavior).
+                // loggerFactory unavailable (should not happen in normal startup).
+                // Fall back to DI-managed creation (original behavior).
                 serviceCollection.AddSingleton<WebFileTransformationService>()
                     .AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>())
                     .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
@@ -69,10 +69,14 @@ namespace Jellyfin.Plugin.FileTransformation
 
         private IFileProvider GetFileTransformationFileProvider(IServerConfigurationManager serverConfigurationManager, IApplicationBuilder mainApplicationBuilder)
         {
-            // Prefer the eagerly-created instances (always available), fall back to DI.
-            IWebFileTransformationReadService? readService = s_transformationService
+            // Only use the eagerly-created instances when the plugin is actually active.
+            // During validation hosts FileTransformationPlugin.Instance is null, and the
+            // logger would NRE if we handed it to the file provider.
+            bool pluginActive = FileTransformationPlugin.Instance != null;
+
+            IWebFileTransformationReadService? readService = (pluginActive ? s_transformationService : null)
                 ?? mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
-            IFileTransformationLogger? transformationLogger = s_transformationLogger
+            IFileTransformationLogger? transformationLogger = (pluginActive ? s_transformationLogger : null)
                 ?? mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
 
             if (readService == null || transformationLogger == null)
