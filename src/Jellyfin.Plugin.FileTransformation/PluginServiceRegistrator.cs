@@ -69,14 +69,11 @@ namespace Jellyfin.Plugin.FileTransformation
 
         private IFileProvider GetFileTransformationFileProvider(IServerConfigurationManager serverConfigurationManager, IApplicationBuilder mainApplicationBuilder)
         {
-            // Only use the eagerly-created instances when the plugin is actually active.
-            // During validation hosts FileTransformationPlugin.Instance is null, and the
-            // logger would NRE if we handed it to the file provider.
-            bool pluginActive = FileTransformationPlugin.Instance != null;
-
-            IWebFileTransformationReadService? readService = (pluginActive ? s_transformationService : null)
+            // Prefer the eagerly-created instances (always available regardless of DI
+            // container timing), fall back to DI resolution as a last resort.
+            IWebFileTransformationReadService? readService = s_transformationService
                 ?? mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
-            IFileTransformationLogger? transformationLogger = (pluginActive ? s_transformationLogger : null)
+            IFileTransformationLogger? transformationLogger = s_transformationLogger
                 ?? mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
 
             if (readService == null || transformationLogger == null)

@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
         {
             if (logLevel < LogLevel.Information)
             {
-                if (FileTransformationPlugin.Instance.Configuration.DebugLoggingState == DebugLoggingState.Disabled)
+                if (FileTransformationPlugin.Instance?.Configuration?.DebugLoggingState == DebugLoggingState.Disabled)
                 {
                     return;
                 }
