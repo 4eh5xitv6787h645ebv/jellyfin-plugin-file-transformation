@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.FileTransformation
         // fully built, causing GetService<T>() to return null even though RegisterServices
         // already ran. By creating the instances eagerly here we eliminate the race.
         private static WebFileTransformationService? s_transformationService;
-        private static IFileTransformationLogger? s_transformationLogger;
+        private static FileTransformationLogger? s_transformationLogger;
 
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
