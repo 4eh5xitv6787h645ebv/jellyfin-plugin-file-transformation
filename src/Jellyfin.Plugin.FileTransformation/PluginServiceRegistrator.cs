@@ -7,6 +7,7 @@ using MediaBrowser.Controller;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,27 @@ namespace Jellyfin.Plugin.FileTransformation
                 .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
 
             serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
+
+            // No-cache config filter — applies cache-busting headers to plugin
+            // configuration endpoints so admin config changes are picked up by
+            // clients without a hard browser refresh. Benefits all plugins, not
+            // just the ones that ship their own cache-busting logic.
+            //
+            // Registration order:
+            //   1. Registry as singleton (built-in defaults populated in ctor)
+            //   2. Filter as singleton (depends on registry)
+            //   3. PostConfigure<MvcOptions> to add the filter to the global pipeline
+            //
+            // PostConfigure is required (not Configure) because Jellyfin's
+            // AddJellyfinApi(...).AddMvc(...) runs after plugin RegisterServices
+            // and would otherwise overwrite our filter list. PostConfigure runs
+            // after all Configure callbacks, so our addition is preserved.
+            serviceCollection.AddSingleton<INoCacheEndpointRegistry, NoCacheEndpointRegistry>();
+            serviceCollection.AddSingleton<NoCacheConfigFilter>();
+            serviceCollection.PostConfigure<MvcOptions>(options =>
+            {
+                options.Filters.AddService<NoCacheConfigFilter>();
+            });
 
             logger?.LogInformation("[FileTransformation] DI services registered successfully.");
         }

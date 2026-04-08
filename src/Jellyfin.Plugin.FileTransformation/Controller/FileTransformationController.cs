@@ -34,7 +34,28 @@ namespace Jellyfin.Plugin.FileTransformation.Controller
             {
                 await TransformationHelper.ApplyTransformation(path, contents, payload, m_logger, m_serverApplicationHost);
             });
-            
+
+            return Ok();
+        }
+
+        /// <summary>
+        /// Adds a controller/action pair to the no-cache list so its MVC responses
+        /// are returned with Cache-Control: no-store. Provided as a REST endpoint
+        /// for symmetry with <see cref="RegisterTransformation"/>; plugins running
+        /// in-process should prefer the reflection-based <see cref="PluginInterface.RegisterNoCacheEndpoint"/>.
+        /// </summary>
+        [HttpPost("RegisterNoCacheEndpoint")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        public ActionResult RegisterNoCacheEndpoint(
+            [FromBody] NoCacheEndpointRegistrationPayload payload,
+            [FromServices] INoCacheEndpointRegistry registry)
+        {
+            if (string.IsNullOrWhiteSpace(payload.ControllerName) || string.IsNullOrWhiteSpace(payload.ActionName))
+            {
+                return BadRequest("controllerName and actionName are required.");
+            }
+
+            registry.Register(payload.ControllerName, payload.ActionName);
             return Ok();
         }
     }
