@@ -15,6 +15,13 @@ namespace Jellyfin.Plugin.FileTransformation
 {
     public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
+        // Pre-created singleton instances that survive regardless of DI container timing.
+        // The Harmony prefix on Startup.Configure() may fire before the DI container is
+        // fully built, causing GetService<T>() to return null even though RegisterServices
+        // already ran. By creating the instances eagerly here we eliminate the race.
+        private static WebFileTransformationService? s_transformationService;
+        private static FileTransformationLogger? s_transformationLogger;
+
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
             IServerApplicationPaths? applicationPaths = (IServerApplicationPaths?)applicationHost.GetType().GetProperty("ApplicationPaths", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(applicationHost);
@@ -32,19 +39,42 @@ namespace Jellyfin.Plugin.FileTransformation
 
             logger?.LogInformation("[FileTransformation] Delegates set. Registering DI services...");
 
-            serviceCollection.AddSingleton<WebFileTransformationService>()
-                .AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>())
-                .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
+            // Create fresh instances eagerly so they are available to the Harmony prefix
+            // on Startup.Configure() even if the DI container hasn't been built yet.
+            // Always recreate (not ??=) so in-process restarts get a clean state and
+            // stale transformations from a previous host build don't persist.
+            if (loggerFactory != null)
+            {
+                s_transformationLogger = new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
+                s_transformationService = new WebFileTransformationService(s_transformationLogger);
 
-            serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
+                // Register the pre-created instances so DI consumers get the same singletons.
+                serviceCollection.AddSingleton<WebFileTransformationService>(s_transformationService);
+                serviceCollection.AddSingleton<IWebFileTransformationReadService>(s_transformationService);
+                serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s_transformationService);
+                serviceCollection.AddSingleton<IFileTransformationLogger>(s_transformationLogger);
+            }
+            else
+            {
+                // loggerFactory unavailable (should not happen in normal startup).
+                // Fall back to DI-managed creation (original behavior).
+                serviceCollection.AddSingleton<WebFileTransformationService>()
+                    .AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>())
+                    .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
+                serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
+            }
 
             logger?.LogInformation("[FileTransformation] DI services registered successfully.");
         }
 
         private IFileProvider GetFileTransformationFileProvider(IServerConfigurationManager serverConfigurationManager, IApplicationBuilder mainApplicationBuilder)
         {
-            IWebFileTransformationReadService? readService = mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
-            IFileTransformationLogger? transformationLogger = mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
+            // Prefer the eagerly-created instances (always available regardless of DI
+            // container timing), fall back to DI resolution as a last resort.
+            IWebFileTransformationReadService? readService = s_transformationService
+                ?? mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
+            IFileTransformationLogger? transformationLogger = s_transformationLogger
+                ?? mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
 
             if (readService == null || transformationLogger == null)
             {
