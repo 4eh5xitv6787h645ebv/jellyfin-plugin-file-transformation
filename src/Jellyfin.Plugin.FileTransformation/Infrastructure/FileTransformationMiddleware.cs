@@ -435,9 +435,20 @@ public sealed class FileTransformationMiddleware
         byte[] bytes = remoteIp.GetAddressBytes();
         if (bytes.Length == 4)
         {
-            if (bytes[0] == 10) return true;
-            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
-            if (bytes[0] == 192 && bytes[1] == 168) return true;
+            if (bytes[0] == 10)
+            {
+                return true;
+            }
+
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            {
+                return true;
+            }
+
+            if (bytes[0] == 192 && bytes[1] == 168)
+            {
+                return true;
+            }
         }
 
         return false;
