@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
@@ -8,90 +8,165 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace Jellyfin.Plugin.FileTransformation.Helpers
+namespace Jellyfin.Plugin.FileTransformation.Helpers;
+
+public static class TransformationHelper
 {
-    public static class TransformationHelper
+    private static readonly HttpClient SharedHttpClient = new()
     {
-        public static async Task ApplyTransformation(string path, Stream contents, TransformationRegistrationPayload payload, ILogger logger, IServerApplicationHost serverApplicationHost)
+        Timeout = TimeSpan.FromSeconds(15),
+    };
+
+    public static async Task ApplyTransformation(string path, Stream contents, TransformationRegistrationPayload payload, ILogger logger, IServerApplicationHost serverApplicationHost)
+    {
+        logger.LogDebug("[FileTransformation] Transformation requested for {Path}", path);
+
+        // Validate that at least one callback mechanism is configured
+        if (payload.CallbackAssembly == null && payload.TransformationPipe == null
+            && string.IsNullOrEmpty(payload.TransformationEndpoint))
         {
-            logger.LogDebug($"Transformation requested for '{path}'");
+            logger.LogWarning("[FileTransformation] No callback configured for {Path}, skipping", path);
+            return;
+        }
 
-            using StreamReader reader = new StreamReader(contents, leaveOpen: true);
+        using StreamReader reader = new StreamReader(contents, leaveOpen: true);
+        JObject obj = new JObject { { "contents", await reader.ReadToEndAsync().ConfigureAwait(false) } };
 
-            JObject obj = new JObject();
-            obj.Add("contents", reader.ReadToEnd());
-            
-            string? transformedString = null;
-            if (payload.CallbackAssembly != null)
+        string? transformedString = null;
+
+        // Tier 1: Assembly reflection callback
+        if (payload.CallbackAssembly != null)
+        {
+            try
             {
                 Assembly? assembly = AssemblyLoadContext.All
                     .FirstOrDefault(x => x.Assemblies.Select(y => y.FullName).Contains(payload.CallbackAssembly))?
                     .Assemblies.FirstOrDefault(x => x.FullName == payload.CallbackAssembly);
 
-                Type? type = assembly?.GetType(payload.CallbackClass!);
-
-                MethodInfo? method = type?.GetMethod(payload.CallbackMethod!);
-
-                if (method != null)
+                if (assembly == null)
                 {
-                    ParameterInfo payloadParameter = method.GetParameters()[0];
-                    object? paramObj = obj.ToObject(payloadParameter.ParameterType);
-                    
-                    transformedString = (string)method.Invoke(null, new object?[] { paramObj })!;
+                    logger.LogWarning("[FileTransformation] Assembly '{Assembly}' not found for {Path}", payload.CallbackAssembly, path);
+                    return;
                 }
+
+                Type? type = assembly.GetType(payload.CallbackClass!);
+                if (type == null)
+                {
+                    logger.LogWarning("[FileTransformation] Type '{Type}' not found in assembly for {Path}", payload.CallbackClass, path);
+                    return;
+                }
+
+                MethodInfo? method = type.GetMethod(payload.CallbackMethod!);
+                if (method == null)
+                {
+                    logger.LogWarning("[FileTransformation] Method '{Method}' not found on type for {Path}", payload.CallbackMethod, path);
+                    return;
+                }
+
+                ParameterInfo[] parameters = method.GetParameters();
+                if (parameters.Length == 0)
+                {
+                    logger.LogWarning("[FileTransformation] Callback method has no parameters for {Path}", path);
+                    return;
+                }
+
+                object? paramObj = obj.ToObject(parameters[0].ParameterType);
+                transformedString = method.Invoke(null, [paramObj]) as string;
             }
-            
-            if (transformedString == null && payload.TransformationPipe != null)
+            catch (Exception ex)
             {
-                NamedPipeClientStream pipe = new NamedPipeClientStream(".", payload.TransformationPipe, PipeDirection.InOut);
-                await pipe.ConnectAsync();
-                
+                logger.LogError(ex, "[FileTransformation] Assembly callback failed for {Path}", path);
+                return;
+            }
+        }
+
+        // Tier 2: Named pipe
+        if (transformedString == null && payload.TransformationPipe != null)
+        {
+            try
+            {
+                await using NamedPipeClientStream pipe = new NamedPipeClientStream(".", payload.TransformationPipe, PipeDirection.InOut);
+                await pipe.ConnectAsync(5000).ConfigureAwait(false);
+
                 byte[] payloadBytes = Encoding.UTF8.GetBytes(obj.ToString(Formatting.None));
                 byte[] payloadLengthBytes = BitConverter.GetBytes((long)payloadBytes.Length);
-                await pipe.WriteAsync(payloadLengthBytes, 0, 8);
-                await pipe.WriteAsync(payloadBytes, 0, payloadBytes.Length);
-                
+                await pipe.WriteAsync(payloadLengthBytes).ConfigureAwait(false);
+                await pipe.WriteAsync(payloadBytes).ConfigureAwait(false);
+
                 byte[] lengthBuffer = new byte[8];
-                await pipe.ReadExactlyAsync(lengthBuffer, 0, lengthBuffer.Length);
+                await pipe.ReadExactlyAsync(lengthBuffer, 0, lengthBuffer.Length).ConfigureAwait(false);
                 long length = BitConverter.ToInt64(lengthBuffer, 0);
-                
-                MemoryStream memoryStream = new MemoryStream();
+
+                if (length <= 0 || length > 50 * 1024 * 1024)
+                {
+                    logger.LogError("[FileTransformation] Invalid pipe response length ({Length} bytes) for {Path}", length, path);
+                    return;
+                }
+
+                using MemoryStream memoryStream = new MemoryStream();
                 while (length > 0)
                 {
-                    byte[] buffer = new byte[Math.Min(1024, length)];
-                    int bytesRead = await pipe.ReadAsync(buffer, 0, buffer.Length);
+                    byte[] buffer = new byte[Math.Min(8192, length)];
+                    int bytesRead = await pipe.ReadAsync(buffer).ConfigureAwait(false);
+                    if (bytesRead == 0)
+                    {
+                        throw new EndOfStreamException($"Pipe closed prematurely, {length} bytes remaining");
+                    }
+
                     length -= bytesRead;
-                    
                     memoryStream.Write(buffer, 0, bytesRead);
                 }
+
                 transformedString = Encoding.UTF8.GetString(memoryStream.ToArray());
             }
-            
-            if (transformedString == null)
+            catch (Exception ex)
             {
-                HttpClient client = new HttpClient();
-                if (!(payload.TransformationEndpoint.StartsWith("http") || payload.TransformationEndpoint.StartsWith("https")))
-                {
-                    string? publishedServerUrl = serverApplicationHost.GetType()
-                        .GetProperty("PublishedServerUrl", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(serverApplicationHost) as string;
-                    logger.LogTrace($"Retrieved value for published server URL: {publishedServerUrl}");
-                
-                    client.BaseAddress = new Uri(publishedServerUrl ?? $"http://localhost:{serverApplicationHost.HttpPort}");
-
-                    logger.LogTrace($"Set base address to '{client.BaseAddress}'");
-                }
-                
-                HttpResponseMessage responseMessage = await client
-                    .PostAsync(payload.TransformationEndpoint, new StringContent(obj.ToString(Formatting.None), Encoding.UTF8, "application/json"));
-                transformedString = await responseMessage.Content.ReadAsStringAsync();
-                
-                logger.LogDebug($"Response for request '{responseMessage.RequestMessage?.RequestUri?.ToString()}' received from endpoint '{payload.TransformationEndpoint}' with code {responseMessage.StatusCode} {(int)responseMessage.StatusCode}");
+                logger.LogError(ex, "[FileTransformation] Named pipe callback failed for {Path}", path);
+                return;
             }
-            
-            contents.Seek(0, SeekOrigin.Begin);
-
-            using StreamWriter textWriter = new StreamWriter(contents, null, -1, true);
-            textWriter.Write(transformedString);
         }
+
+        // Tier 3: HTTP endpoint
+        if (transformedString == null && !string.IsNullOrEmpty(payload.TransformationEndpoint))
+        {
+            try
+            {
+                string requestUri = payload.TransformationEndpoint;
+                if (!requestUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    && !requestUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    requestUri = $"http://localhost:{serverApplicationHost.HttpPort}{payload.TransformationEndpoint}";
+                }
+
+                HttpResponseMessage response = await SharedHttpClient
+                    .PostAsync(requestUri, new StringContent(obj.ToString(Formatting.None), Encoding.UTF8, "application/json"))
+                    .ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logger.LogError("[FileTransformation] HTTP callback returned {Status} for {Path}", (int)response.StatusCode, path);
+                    return;
+                }
+
+                transformedString = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[FileTransformation] HTTP callback failed for {Path}", path);
+                return;
+            }
+        }
+
+        if (transformedString == null)
+        {
+            return;
+        }
+
+        // Write result back to stream — truncate to avoid stale trailing bytes
+        contents.Seek(0, SeekOrigin.Begin);
+        using StreamWriter textWriter = new StreamWriter(contents, null, -1, leaveOpen: true);
+        textWriter.Write(transformedString);
+        await textWriter.FlushAsync().ConfigureAwait(false);
+        contents.SetLength(contents.Position);
     }
 }

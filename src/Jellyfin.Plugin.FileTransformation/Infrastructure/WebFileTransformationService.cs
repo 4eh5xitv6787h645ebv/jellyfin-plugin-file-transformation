@@ -1,133 +1,180 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.FileTransformation.Library;
 using Microsoft.Extensions.Logging;
 
-namespace Jellyfin.Plugin.FileTransformation.Infrastructure
+namespace Jellyfin.Plugin.FileTransformation.Infrastructure;
+
+public class WebFileTransformationService : IWebFileTransformationReadService, IWebFileTransformationWriteService
 {
-    public class WebFileTransformationService : IWebFileTransformationReadService, IWebFileTransformationWriteService
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
+
+    private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> _fileTransformations = new();
+    private readonly ConcurrentDictionary<string, Regex> _regexCache = new();
+    private readonly object _pipelineLock = new();
+    private readonly ILogger<FileTransformationPlugin> _logger;
+
+    public WebFileTransformationService(IFileTransformationLogger logger)
     {
-        private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> m_fileTransformations = new ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>>();
-        private readonly ILogger<FileTransformationPlugin> m_logger;
+        _logger = logger;
+    }
 
-        public WebFileTransformationService(IFileTransformationLogger logger)
+    private static string NormalizePath(string path)
+    {
+        return path.TrimStart('/');
+    }
+
+    private Regex GetOrCreateRegex(string pattern)
+    {
+        return _regexCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled, RegexTimeout));
+    }
+
+    public bool NeedsTransformation(string path)
+    {
+        path = NormalizePath(path);
+
+        if (_fileTransformations.ContainsKey(path))
         {
-            m_logger = logger;
-        }
-        
-        private string NormalizePath(string path)
-        {
-            return path.TrimStart('/');
+            return true;
         }
 
-        public bool NeedsTransformation(string path)
+        return _fileTransformations.Keys.Any(key =>
         {
-            if (m_fileTransformations.ContainsKey(NormalizePath(path)))
+            try
             {
-                return true;
+                return GetOrCreateRegex(key).IsMatch(path);
             }
-
-            return m_fileTransformations.Keys.Any(x =>
+            catch (RegexMatchTimeoutException)
             {
-                Regex r = new Regex(x);
+                _logger.LogWarning("[FileTransformation] Regex timeout matching pattern '{Pattern}' against '{Path}'", key, path);
+                return false;
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(ex, "[FileTransformation] Invalid regex pattern '{Pattern}'", key);
+                return false;
+            }
+        });
+    }
 
-                return r.IsMatch(path);
+    public async Task RunTransformation(string path, Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        path = NormalizePath(path);
+
+        // Find the matching pipeline — exact match first, then regex
+        ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline = null;
+
+        if (_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? exactMatch))
+        {
+            pipeline = exactMatch;
+        }
+        else
+        {
+            string? key = _fileTransformations.Keys.FirstOrDefault(k =>
+            {
+                try
+                {
+                    return GetOrCreateRegex(k).IsMatch(path);
+                }
+                catch (Exception ex) when (ex is RegexMatchTimeoutException or ArgumentException)
+                {
+                    _logger.LogWarning(ex, "[FileTransformation] Regex error for pattern '{Pattern}'", k);
+                    return false;
+                }
             });
+
+            if (key != null)
+            {
+                _fileTransformations.TryGetValue(key, out pipeline);
+            }
         }
 
-        public async Task RunTransformation(string path, Stream stream)
+        if (pipeline == null)
         {
-            if (stream == null)
+            return;
+        }
+
+        // Snapshot under lock to avoid races with Add/Remove
+        List<(Guid TransformId, TransformFile Delegate)> transforms;
+        lock (_pipelineLock)
+        {
+            transforms = pipeline.ToList();
+        }
+
+        foreach ((Guid transformId, TransformFile action) in transforms)
+        {
+            try
             {
-                throw new ArgumentNullException(nameof(stream));
+                stream.Seek(0, SeekOrigin.Begin);
+                await action(path, stream).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[FileTransformation] Transform {TransformId} failed for '{Path}'. Continuing with next.",
+                    transformId, path);
+            }
+        }
+
+        stream.Seek(0, SeekOrigin.Begin);
+    }
+
+    public void AddTransformation(Guid id, string path, TransformFile transformation)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(transformation);
+
+        path = NormalizePath(path);
+        _logger.LogInformation("[FileTransformation] Registering transformation for '{Path}' (ID: {Id})", path, id);
+
+        lock (_pipelineLock)
+        {
+            if (!_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline))
+            {
+                pipeline = new List<(Guid TransformId, TransformFile Delegate)>();
+                _fileTransformations[path] = pipeline;
             }
 
-            path = NormalizePath(path);
-
-            ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline = null;
-
-            if (m_fileTransformations.ContainsKey(path))
+            if (!pipeline.Any(x => x.TransformId == id))
             {
-                pipeline = m_fileTransformations[path];
+                pipeline.Add((id, transformation));
             }
-            else
+        }
+    }
+
+    public void RemoveTransformation(Guid id)
+    {
+        lock (_pipelineLock)
+        {
+            List<string> emptyKeys = new List<string>();
+
+            foreach (KeyValuePair<string, ICollection<(Guid TransformId, TransformFile Delegate)>> pipelines in _fileTransformations)
             {
-                string? key = m_fileTransformations.Keys.FirstOrDefault(x =>
+                (Guid TransformId, TransformFile Delegate) match = pipelines.Value.FirstOrDefault(x => x.TransformId == id);
+                if (match != default)
                 {
-                    Regex r = new Regex(x);
-                    
-                    return r.IsMatch(path);
-                });
-
-                if (key != null)
-                {
-                    pipeline = m_fileTransformations[key];
-                }
-            }
-
-            if (pipeline != null)
-            {
-                List<(Guid, TransformFile)> cachedPipeline = new List<(Guid, TransformFile)>();
-
-                do
-                {
-                    cachedPipeline = pipeline.Where(x => !cachedPipeline.Contains(x)).ToList();
-                    
-                    foreach ((_, TransformFile action) in cachedPipeline)
+                    pipelines.Value.Remove(match);
+                    if (pipelines.Value.Count == 0)
                     {
-                        stream.Seek(0, SeekOrigin.Begin);
-                        await action(path, stream);
+                        emptyKeys.Add(pipelines.Key);
                     }
-                } while (cachedPipeline.Any());
-            }
-        }
-
-        public void AddTransformation(Guid id, string path, TransformFile transformation)
-        {
-            m_logger.LogInformation($"Received transformation registration for '{path}' with ID '{id}'");
-            if (path == null)
-            {
-                throw new ArgumentNullException(nameof(path));
-            }
-
-            if (transformation == null)
-            {
-                m_logger.LogError($"Transformation with ID '{id}' has null callback");
-                throw new ArgumentNullException(nameof(transformation));
-            }
-
-            path = NormalizePath(path);
-            lock (m_fileTransformations)
-            {
-                if (!m_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline))
-                {
-                    pipeline = new List<(Guid TransformId, TransformFile Delegate)>();
-                    m_fileTransformations[path] = pipeline;
-                }
-
-                if (!pipeline.Any(x => x.TransformId == id))
-                {
-                    pipeline.Add((id, transformation));
                 }
             }
-        }
 
-        public void RemoveTransformation(Guid id)
-        {
-            foreach (KeyValuePair<string, ICollection<(Guid TransformId, TransformFile Delegate)>> pipelines in m_fileTransformations)
+            // Clean up empty pipelines and stale regex cache entries
+            foreach (string key in emptyKeys)
             {
-                (Guid TransformId, TransformFile Delegate)? pipeline = pipelines.Value.FirstOrDefault(x => x.TransformId == id);
-                if (pipeline != null)
-                {
-                    pipelines.Value.Remove(pipeline.Value);
-                }
+                _fileTransformations.TryRemove(key, out _);
+                _regexCache.TryRemove(key, out _);
             }
         }
+    }
 
-        public void UpdateTransformation(Guid id, string path, TransformFile transformation)
-        {
-            RemoveTransformation(id);
-            AddTransformation(id, path, transformation);
-        }
+    public void UpdateTransformation(Guid id, string path, TransformFile transformation)
+    {
+        RemoveTransformation(id);
+        AddTransformation(id, path, transformation);
     }
 }

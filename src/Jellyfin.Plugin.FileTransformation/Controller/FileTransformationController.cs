@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.FileTransformation.Controller
             m_serverApplicationHost = serverApplicationHost;
             m_logger = logger;
         }
-        
+
         [HttpPost("RegisterTransformation")]
         [Authorize(Policy = Policies.RequiresElevation)]
         public ActionResult RegisterTransformation([FromBody] TransformationRegistrationPayload payload, [FromServices] IWebFileTransformationWriteService writeService)
@@ -34,8 +34,19 @@ namespace Jellyfin.Plugin.FileTransformation.Controller
             {
                 await TransformationHelper.ApplyTransformation(path, contents, payload, m_logger, m_serverApplicationHost);
             });
-            
+
             return Ok();
+        }
+
+        /// <summary>
+        /// Returns the current config version. The frontend polls this to detect
+        /// when any plugin config has changed, then soft-reloads on the home page.
+        /// </summary>
+        [HttpGet("config-version")]
+        [AllowAnonymous]
+        public ActionResult GetConfigVersion([FromServices] Infrastructure.ConfigVersionService versionService)
+        {
+            return Ok(new { version = versionService.Version });
         }
     }
 }

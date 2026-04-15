@@ -22,12 +22,21 @@
         <form class="fileTransformationConfigurationForm" style="max-width: 95%">
             <div id="configurationWrapper">
                 <div class="inputContainer">
-                    <span>Debug Logging: </span>
+                    <label class="inputLabel">Config Change Notification</label>
+                    <select is="emby-select" class="emby-select-withcolor emby-select" data-id="configChangeNotificationSelect">
+                        <option value="Toast">Toast notification (recommended)</option>
+                        <option value="AutoReload">Auto-reload on home page</option>
+                        <option value="Disabled">Disabled</option>
+                    </select>
+                    <div class="fieldDescription">When any plugin's settings change, how should the browser respond? "Toast" shows a persistent notification with a refresh button. "Auto-reload" automatically refreshes the page when the user is on the home page. A page refresh is needed after changing this setting.</div>
+                </div>
+                <div class="inputContainer">
+                    <label class="inputLabel">Debug Logging</label>
                     <select is="emby-select" class="emby-select-withcolor emby-select" data-id="debugLoggingSelect">
                         <option value="Enabled">Enabled</option>
                         <option value="Disabled">Disabled</option>
                     </select>
-                    <span>Whether the plugin should output debug logging. (Note this will slow down your page response time, only enable this if you're creating an issue on GitHub to provide additional information)</span>
+                    <div class="fieldDescription">Output debug logging for file transformations. Only enable when troubleshooting.</div>
                 </div>
             </div>
             <br />
@@ -116,6 +125,7 @@
                     })
                     
                     const config = {
+                        ConfigChangeNotification: document.querySelector("[data-id=configChangeNotificationSelect]").value,
                         DebugLoggingState: document.querySelector("[data-id=debugLoggingSelect]").value,
                         Transformations: transformations
                     };
@@ -130,11 +140,16 @@
                         });
                 },
                 loadConfig: function () {
+                    // Clear existing rows to prevent duplicates on pageshow re-entry
+                    while (FileTransformation.configsHost.firstChild) {
+                        FileTransformation.configsHost.removeChild(FileTransformation.configsHost.firstChild);
+                    }
                     Dashboard.showLoadingMsg();
                     window.ApiClient.getPluginConfiguration(FileTransformation.pluginId)
                         .then(function (config) {
+                            document.querySelector("[data-id=configChangeNotificationSelect]").value = config.ConfigChangeNotification || 'Toast';
                             document.querySelector("[data-id=debugLoggingSelect]").value = config.DebugLoggingState;
-                            
+
                             config.Transformations.forEach(FileTransformation.addNewConfig);
                         })
                         .catch(function (error) {
@@ -172,9 +187,13 @@
                     e.preventDefault();
                     FileTransformation.addNewConfig();
                 },
+                _initialized: false,
                 init: function () {
-                    FileTransformation.btnSave.addEventListener("click", FileTransformation.saveConfig);
-                    FileTransformation.btnAddCustom.addEventListener("click", FileTransformation.addNewConfigEvent);
+                    if (!FileTransformation._initialized) {
+                        FileTransformation._initialized = true;
+                        FileTransformation.btnSave.addEventListener("click", FileTransformation.saveConfig);
+                        FileTransformation.btnAddCustom.addEventListener("click", FileTransformation.addNewConfigEvent);
+                    }
                     FileTransformation.loadConfig();
                 }
             }

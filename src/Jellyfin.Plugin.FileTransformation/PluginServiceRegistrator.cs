@@ -1,97 +1,33 @@
-using System.Reflection;
-using Jellyfin.Plugin.FileTransformation.Library;
 using Jellyfin.Plugin.FileTransformation.Infrastructure;
-using Jellyfin.Plugin.FileTransformation.Helpers;
-using MediaBrowser.Common.Configuration;
+using Jellyfin.Plugin.FileTransformation.Library;
 using MediaBrowser.Controller;
-using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Plugins;
-using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging;
 
-namespace Jellyfin.Plugin.FileTransformation
+namespace Jellyfin.Plugin.FileTransformation;
+
+/// <summary>
+/// Registers plugin services in the DI container.
+/// Uses IStartupFilter to inject middleware — no Harmony patching needed.
+/// </summary>
+public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
-    public class PluginServiceRegistrator : IPluginServiceRegistrator
+    public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        // Pre-created singleton instances that survive regardless of DI container timing.
-        // The Harmony prefix on Startup.Configure() may fire before the DI container is
-        // fully built, causing GetService<T>() to return null even though RegisterServices
-        // already ran. By creating the instances eagerly here we eliminate the race.
-        private static WebFileTransformationService? s_transformationService;
-        private static FileTransformationLogger? s_transformationLogger;
+        // IStartupFilter — injects FileTransformationMiddleware before Jellyfin's pipeline.
+        // This replaces the Harmony-based Startup.Configure() patching.
+        serviceCollection.AddTransient<IStartupFilter, FileTransformationStartupFilter>();
 
-        public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
-        {
-            IServerApplicationPaths? applicationPaths = (IServerApplicationPaths?)applicationHost.GetType().GetProperty("ApplicationPaths", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(applicationHost);
-            ILoggerFactory? loggerFactory = (ILoggerFactory?)applicationHost.GetType().GetProperty("LoggerFactory", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(applicationHost);
-            ILogger? logger = loggerFactory?.CreateLogger(typeof(PluginServiceRegistrator).FullName ?? typeof(PluginServiceRegistrator).Name);
+        // Core transformation service (singleton, registered as both read and write interfaces)
+        serviceCollection.AddSingleton<WebFileTransformationService>();
+        serviceCollection.AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>());
+        serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
 
-            logger?.LogInformation("[FileTransformation] RegisterServices called. Initializing module...");
+        // Logger wrapper
+        serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
 
-            ModuleInitializer.Initialize(applicationPaths, loggerFactory?.CreateLogger(typeof(ModuleInitializer).FullName ?? typeof(ModuleInitializer).Name));
-
-            logger?.LogInformation("[FileTransformation] ModuleInitializer complete. Setting up delegates...");
-
-            StartupHelper.WebDefaultFilesFileProvider = GetFileTransformationFileProvider;
-            StartupHelper.WebStaticFilesFileProvider = GetFileTransformationFileProvider;
-
-            logger?.LogInformation("[FileTransformation] Delegates set. Registering DI services...");
-
-            // Create fresh instances eagerly so they are available to the Harmony prefix
-            // on Startup.Configure() even if the DI container hasn't been built yet.
-            // Always recreate (not ??=) so in-process restarts get a clean state and
-            // stale transformations from a previous host build don't persist.
-            if (loggerFactory != null)
-            {
-                s_transformationLogger = new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
-                s_transformationService = new WebFileTransformationService(s_transformationLogger);
-
-                // Register the pre-created instances so DI consumers get the same singletons.
-                serviceCollection.AddSingleton<WebFileTransformationService>(s_transformationService);
-                serviceCollection.AddSingleton<IWebFileTransformationReadService>(s_transformationService);
-                serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s_transformationService);
-                serviceCollection.AddSingleton<IFileTransformationLogger>(s_transformationLogger);
-            }
-            else
-            {
-                // loggerFactory unavailable (should not happen in normal startup).
-                // Fall back to DI-managed creation (original behavior).
-                serviceCollection.AddSingleton<WebFileTransformationService>()
-                    .AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>())
-                    .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
-                serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
-            }
-
-            logger?.LogInformation("[FileTransformation] DI services registered successfully.");
-        }
-
-        private IFileProvider GetFileTransformationFileProvider(IServerConfigurationManager serverConfigurationManager, IApplicationBuilder mainApplicationBuilder)
-        {
-            // Prefer the eagerly-created instances (always available regardless of DI
-            // container timing), fall back to DI resolution as a last resort.
-            IWebFileTransformationReadService? readService = s_transformationService
-                ?? mainApplicationBuilder.ApplicationServices.GetService<IWebFileTransformationReadService>();
-            IFileTransformationLogger? transformationLogger = s_transformationLogger
-                ?? mainApplicationBuilder.ApplicationServices.GetService<IFileTransformationLogger>();
-
-            if (readService == null || transformationLogger == null)
-            {
-                // Services were not registered — likely the plugin was disabled during type validation
-                // or RegisterServices was not called. Fall back to default file provider.
-                ILogger? fallbackLogger = mainApplicationBuilder.ApplicationServices.GetService<ILoggerFactory>()
-                    ?.CreateLogger(typeof(PluginServiceRegistrator).FullName ?? typeof(PluginServiceRegistrator).Name);
-                fallbackLogger?.LogWarning(
-                    "[FileTransformation] IWebFileTransformationReadService or IFileTransformationLogger not found in DI container. " +
-                    "File transformations are DISABLED. Falling back to default PhysicalFileProvider.");
-                return new PhysicalFileProvider(serverConfigurationManager.ApplicationPaths.WebPath);
-            }
-
-            return new PhysicalTransformedFileProvider(
-                new PhysicalFileProvider(serverConfigurationManager.ApplicationPaths.WebPath),
-                readService,
-                transformationLogger);
-        }
+        // Config version tracking for auto-refresh
+        serviceCollection.AddSingleton<ConfigVersionService>();
     }
 }
