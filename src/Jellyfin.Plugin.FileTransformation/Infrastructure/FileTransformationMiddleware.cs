@@ -300,7 +300,7 @@ public sealed class FileTransformationMiddleware
             // This brings back 304 responses for unchanged transformed content.
             bufferedBody.Seek(0, SeekOrigin.Begin);
             byte[] hashBytes = await SHA256.HashDataAsync(bufferedBody).ConfigureAwait(false);
-            string etag = $"\"{Convert.ToHexStringLower(hashBytes[..8])}\"";
+            string etag = $"\"{BitConverter.ToString(hashBytes, 0, 8).Replace("-", string.Empty).ToLowerInvariant()}\"";
 
             // Check If-None-Match — return 304 if content hasn't changed
             string ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
