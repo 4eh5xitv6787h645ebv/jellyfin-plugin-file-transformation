@@ -83,6 +83,23 @@ When your transformation method is invoked you will receive a object representin
 }
 ```
 
+## Contribution
+
+### Code Contributions
+
+You're more than welcome to contribute to this plugin in any way that betters it! I only ask that you follow the same code style as myself. A few points to note:
+
+- Please don't commit with any whitespace changes, might be worth turning off auto-linters
+- Please don't use `var` unless you have to due to differing namespaces between JF versions (honestly, I'm not going to gripe for the odd one, but it's good to try at least)
+- Please at least check the plugin compiles with 10.10.7 and the latest version of JF
+- Please put braces on new lines and use them even for 1 line statements
+
+As a general rule of thumb, please try to blend in with the codebase, I use a mutated hungarian notation for my coding style, I will ask for this to be followed.
+
+After following these guidelines, please create a pull request and I'll review it as soon as I can.
+
+Please declare your AI usage, if any, and if you have used AI for your change, please also declare your coding experience without AI. This won't impact whether the change is merged, it will allow me to properly and correctly review the change to ensure that nothing slips through the net.
+
 ## Requests
 If any functionality is desired to be overridden from Jellyfin's server please open a request on https://features.iamparadox.dev.
 
