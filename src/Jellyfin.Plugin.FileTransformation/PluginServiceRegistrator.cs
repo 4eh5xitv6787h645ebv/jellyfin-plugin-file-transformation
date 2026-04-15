@@ -39,16 +39,39 @@ namespace Jellyfin.Plugin.FileTransformation
 
             logger?.LogInformation("[FileTransformation] Delegates set. Registering DI services...");
 
-            // Create fresh instances eagerly so they are available to the Harmony prefix
+            // Try to create instances eagerly so they are available to the Harmony prefix
             // on Startup.Configure() even if the DI container hasn't been built yet.
-            // Always recreate (not ??=) so in-process restarts get a clean state and
-            // stale transformations from a previous host build don't persist.
+            // Old statics are kept until replacements are ready so concurrent Harmony
+            // prefix calls never observe a null window during in-process restarts.
             if (loggerFactory != null)
             {
-                s_transformationLogger = new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
-                s_transformationService = new WebFileTransformationService(s_transformationLogger);
+                try
+                {
+                    var tempLogger = new FileTransformationLogger(loggerFactory.CreateLogger<FileTransformationPlugin>());
+                    var tempService = new WebFileTransformationService(tempLogger);
+                    s_transformationLogger = tempLogger;
+                    s_transformationService = tempService;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                {
+                    logger?.LogError(ex, "[FileTransformation] Eager instance creation failed. " +
+                        "DI-managed creation will be attempted as fallback but may also fail for the same reason.");
+                    s_transformationLogger = null;
+                    s_transformationService = null;
+                }
+            }
+            else
+            {
+                // loggerFactory unavailable -- clear statics since we cannot create
+                // fresh instances and must not carry stale ones into the new host.
+                s_transformationService = null;
+                s_transformationLogger = null;
+            }
 
-                // Register the pre-created instances so DI consumers get the same singletons.
+            // DI registrations always happen via one of two paths: pre-created
+            // instances when available, or DI-managed factory creation as fallback.
+            if (s_transformationService != null && s_transformationLogger != null)
+            {
                 serviceCollection.AddSingleton<WebFileTransformationService>(s_transformationService);
                 serviceCollection.AddSingleton<IWebFileTransformationReadService>(s_transformationService);
                 serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s_transformationService);
@@ -56,8 +79,6 @@ namespace Jellyfin.Plugin.FileTransformation
             }
             else
             {
-                // loggerFactory unavailable (should not happen in normal startup).
-                // Fall back to DI-managed creation (original behavior).
                 serviceCollection.AddSingleton<WebFileTransformationService>()
                     .AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>())
                     .AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
