@@ -202,9 +202,12 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 relativePath = "index.html";
             }
 
-            // Always intercept index.html (for auto-refresh script injection).
+            // Only intercept index.html for auto-refresh script injection when the feature is enabled.
             // For other paths, only intercept if a transformation is registered.
-            bool isIndexHtml = string.Equals(relativePath, "index.html", StringComparison.OrdinalIgnoreCase);
+            Configuration.ConfigChangeNotification notification = FileTransformationPlugin.Instance?.Configuration?.ConfigChangeNotification
+                ?? Configuration.ConfigChangeNotification.Toast;
+            bool isIndexHtml = string.Equals(relativePath, "index.html", StringComparison.OrdinalIgnoreCase)
+                && notification != Configuration.ConfigChangeNotification.Disabled;
             bool needsTransform = readService.NeedsTransformation(relativePath);
 
             if (!isIndexHtml && !needsTransform)
