@@ -77,6 +77,8 @@ namespace Jellyfin.Plugin.FileTransformation
 
             using StreamWriter textWriter = new StreamWriter(contents, null, -1, true);
             textWriter.Write(transformedString);
+            // Flush is required here so the stream position is correct for SetLength below.
+            // Without it the writer's internal buffer may not be written yet.
             textWriter.Flush();
             contents.SetLength(contents.Position);
         }

@@ -36,7 +36,7 @@
                         <option value="Enabled">Enabled</option>
                         <option value="Disabled">Disabled</option>
                     </select>
-                    <div class="fieldDescription">Output debug logging for file transformations. Only enable when troubleshooting.</div>
+                    <span>Whether the plugin should output debug logging. (Note this will slow down your page response time, only enable this if you're creating an issue on GitHub to provide additional information)</span>
                 </div>
             </div>
             <br />
@@ -98,6 +98,7 @@
             
             const FileTransformation = {
                 pluginId: "5e87cc92-571a-4d8d-8d98-d2d4147f9f90",
+                initialized: false,
                 configurationWrapper: document.querySelector("#configurationWrapper"),
                 configsHost: document.querySelector("#configs-host"),
 
@@ -187,10 +188,9 @@
                     e.preventDefault();
                     FileTransformation.addNewConfig();
                 },
-                _initialized: false,
                 init: function () {
-                    if (!FileTransformation._initialized) {
-                        FileTransformation._initialized = true;
+                    if (!FileTransformation.initialized) {
+                        FileTransformation.initialized = true;
                         FileTransformation.btnSave.addEventListener("click", FileTransformation.saveConfig);
                         FileTransformation.btnAddCustom.addEventListener("click", FileTransformation.addNewConfigEvent);
                     }
@@ -198,7 +198,6 @@
                 }
             }
 
-            // view.addEventListener("viewshow", function (e) {
             document.querySelector('#fileTransformationConfigurationPage').addEventListener("pageshow", function () {
                 FileTransformation.init();
             });

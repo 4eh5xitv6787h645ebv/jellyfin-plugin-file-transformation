@@ -3,178 +3,179 @@ using System.Text.RegularExpressions;
 using Jellyfin.Plugin.FileTransformation.Library;
 using Microsoft.Extensions.Logging;
 
-namespace Jellyfin.Plugin.FileTransformation.Infrastructure;
-
-public class WebFileTransformationService : IWebFileTransformationReadService, IWebFileTransformationWriteService
+namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 {
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
-
-    private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> _fileTransformations = new();
-    private readonly ConcurrentDictionary<string, Regex> _regexCache = new();
-    private readonly object _pipelineLock = new();
-    private readonly ILogger<FileTransformationPlugin> _logger;
-
-    public WebFileTransformationService(IFileTransformationLogger logger)
+    public class WebFileTransformationService : IWebFileTransformationReadService, IWebFileTransformationWriteService
     {
-        _logger = logger;
-    }
+        private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
-    private static string NormalizePath(string path)
-    {
-        return path.TrimStart('/');
-    }
+        private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> m_fileTransformations = new();
+        private readonly ConcurrentDictionary<string, Regex> m_regexCache = new();
+        private readonly object m_pipelineLock = new();
+        private readonly ILogger<FileTransformationPlugin> m_logger;
 
-    private Regex GetOrCreateRegex(string pattern)
-    {
-        return _regexCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled, RegexTimeout));
-    }
-
-    public bool NeedsTransformation(string path)
-    {
-        path = NormalizePath(path);
-
-        if (_fileTransformations.ContainsKey(path))
+        public WebFileTransformationService(IFileTransformationLogger logger)
         {
-            return true;
+            m_logger = logger;
         }
 
-        return _fileTransformations.Keys.Any(key =>
+        private static string NormalizePath(string path)
         {
-            try
-            {
-                return GetOrCreateRegex(key).IsMatch(path);
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                _logger.LogWarning("[FileTransformation] Regex timeout matching pattern '{Pattern}' against '{Path}'", key, path);
-                return false;
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "[FileTransformation] Invalid regex pattern '{Pattern}'", key);
-                return false;
-            }
-        });
-    }
-
-    public async Task RunTransformation(string path, Stream stream)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-
-        path = NormalizePath(path);
-
-        // Find the matching pipeline — exact match first, then regex
-        ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline = null;
-
-        if (_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? exactMatch))
-        {
-            pipeline = exactMatch;
+            return path.TrimStart('/');
         }
-        else
+
+        private Regex GetOrCreateRegex(string pattern)
         {
-            string? key = _fileTransformations.Keys.FirstOrDefault(k =>
+            return m_regexCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled, RegexTimeout));
+        }
+
+        public bool NeedsTransformation(string path)
+        {
+            path = NormalizePath(path);
+
+            if (m_fileTransformations.ContainsKey(path))
+            {
+                return true;
+            }
+
+            return m_fileTransformations.Keys.Any(key =>
             {
                 try
                 {
-                    return GetOrCreateRegex(k).IsMatch(path);
+                    return GetOrCreateRegex(key).IsMatch(path);
                 }
-                catch (Exception ex) when (ex is RegexMatchTimeoutException or ArgumentException)
+                catch (RegexMatchTimeoutException)
                 {
-                    _logger.LogWarning(ex, "[FileTransformation] Regex error for pattern '{Pattern}'", k);
+                    m_logger.LogWarning("[FileTransformation] Regex timeout matching pattern '{Pattern}' against '{Path}'", key, path);
+                    return false;
+                }
+                catch (ArgumentException ex)
+                {
+                    m_logger.LogWarning(ex, "[FileTransformation] Invalid regex pattern '{Pattern}'", key);
                     return false;
                 }
             });
-
-            if (key != null)
-            {
-                _fileTransformations.TryGetValue(key, out pipeline);
-            }
         }
 
-        if (pipeline == null)
+        public async Task RunTransformation(string path, Stream stream)
         {
-            return;
-        }
+            ArgumentNullException.ThrowIfNull(stream);
 
-        // Snapshot under lock to avoid races with Add/Remove
-        List<(Guid TransformId, TransformFile Delegate)> transforms;
-        lock (_pipelineLock)
-        {
-            transforms = pipeline.ToList();
-        }
+            path = NormalizePath(path);
 
-        foreach ((Guid transformId, TransformFile action) in transforms)
-        {
-            try
+            // Find the matching pipeline — exact match first, then regex
+            ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline = null;
+
+            if (m_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? exactMatch))
             {
-                stream.Seek(0, SeekOrigin.Begin);
-                await action(path, stream).ConfigureAwait(false);
+                pipeline = exactMatch;
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex,
-                    "[FileTransformation] Transform {TransformId} failed for '{Path}'. Continuing with next.",
-                    transformId, path);
-            }
-        }
-
-        stream.Seek(0, SeekOrigin.Begin);
-    }
-
-    public void AddTransformation(Guid id, string path, TransformFile transformation)
-    {
-        ArgumentNullException.ThrowIfNull(path);
-        ArgumentNullException.ThrowIfNull(transformation);
-
-        path = NormalizePath(path);
-        _logger.LogInformation("[FileTransformation] Registering transformation for '{Path}' (ID: {Id})", path, id);
-
-        lock (_pipelineLock)
-        {
-            if (!_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline))
-            {
-                pipeline = new List<(Guid TransformId, TransformFile Delegate)>();
-                _fileTransformations[path] = pipeline;
-            }
-
-            if (!pipeline.Any(x => x.TransformId == id))
-            {
-                pipeline.Add((id, transformation));
-            }
-        }
-    }
-
-    public void RemoveTransformation(Guid id)
-    {
-        lock (_pipelineLock)
-        {
-            List<string> emptyKeys = new List<string>();
-
-            foreach (KeyValuePair<string, ICollection<(Guid TransformId, TransformFile Delegate)>> pipelines in _fileTransformations)
-            {
-                (Guid TransformId, TransformFile Delegate) match = pipelines.Value.FirstOrDefault(x => x.TransformId == id);
-                if (match != default)
+                string? key = m_fileTransformations.Keys.FirstOrDefault(k =>
                 {
-                    pipelines.Value.Remove(match);
-                    if (pipelines.Value.Count == 0)
+                    try
                     {
-                        emptyKeys.Add(pipelines.Key);
+                        return GetOrCreateRegex(k).IsMatch(path);
                     }
+                    catch (Exception ex) when (ex is RegexMatchTimeoutException or ArgumentException)
+                    {
+                        m_logger.LogWarning(ex, "[FileTransformation] Regex error for pattern '{Pattern}'", k);
+                        return false;
+                    }
+                });
+
+                if (key != null)
+                {
+                    m_fileTransformations.TryGetValue(key, out pipeline);
                 }
             }
 
-            // Clean up empty pipelines and stale regex cache entries
-            foreach (string key in emptyKeys)
+            if (pipeline == null)
             {
-                _fileTransformations.TryRemove(key, out _);
-                _regexCache.TryRemove(key, out _);
+                return;
+            }
+
+            // Snapshot under lock to avoid races with Add/Remove
+            List<(Guid TransformId, TransformFile Delegate)> transforms;
+            lock (m_pipelineLock)
+            {
+                transforms = pipeline.ToList();
+            }
+
+            foreach ((Guid transformId, TransformFile action) in transforms)
+            {
+                try
+                {
+                    stream.Seek(0, SeekOrigin.Begin);
+                    await action(path, stream).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    m_logger.LogError(ex,
+                        "[FileTransformation] Transform {TransformId} failed for '{Path}'. Continuing with next.",
+                        transformId, path);
+                }
+            }
+
+            stream.Seek(0, SeekOrigin.Begin);
+        }
+
+        public void AddTransformation(Guid id, string path, TransformFile transformation)
+        {
+            ArgumentNullException.ThrowIfNull(path);
+            ArgumentNullException.ThrowIfNull(transformation);
+
+            path = NormalizePath(path);
+            m_logger.LogInformation("[FileTransformation] Registering transformation for '{Path}' (ID: {Id})", path, id);
+
+            lock (m_pipelineLock)
+            {
+                if (!m_fileTransformations.TryGetValue(path, out ICollection<(Guid TransformId, TransformFile Delegate)>? pipeline))
+                {
+                    pipeline = new List<(Guid TransformId, TransformFile Delegate)>();
+                    m_fileTransformations[path] = pipeline;
+                }
+
+                if (!pipeline.Any(x => x.TransformId == id))
+                {
+                    pipeline.Add((id, transformation));
+                }
             }
         }
-    }
 
-    public void UpdateTransformation(Guid id, string path, TransformFile transformation)
-    {
-        RemoveTransformation(id);
-        AddTransformation(id, path, transformation);
+        public void RemoveTransformation(Guid id)
+        {
+            lock (m_pipelineLock)
+            {
+                List<string> emptyKeys = new List<string>();
+
+                foreach (KeyValuePair<string, ICollection<(Guid TransformId, TransformFile Delegate)>> pipelines in m_fileTransformations)
+                {
+                    (Guid TransformId, TransformFile Delegate) match = pipelines.Value.FirstOrDefault(x => x.TransformId == id);
+                    if (match != default)
+                    {
+                        pipelines.Value.Remove(match);
+                        if (pipelines.Value.Count == 0)
+                        {
+                            emptyKeys.Add(pipelines.Key);
+                        }
+                    }
+                }
+
+                // Clean up empty pipelines and stale regex cache entries
+                foreach (string key in emptyKeys)
+                {
+                    m_fileTransformations.TryRemove(key, out _);
+                    m_regexCache.TryRemove(key, out _);
+                }
+            }
+        }
+
+        public void UpdateTransformation(Guid id, string path, TransformFile transformation)
+        {
+            RemoveTransformation(id);
+            AddTransformation(id, path, transformation);
+        }
     }
 }

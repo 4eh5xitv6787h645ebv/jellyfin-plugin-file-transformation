@@ -5,29 +5,28 @@ using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Jellyfin.Plugin.FileTransformation;
-
-/// <summary>
-/// Registers plugin services in the DI container.
-/// Uses IStartupFilter to inject middleware — no Harmony patching needed.
-/// </summary>
-public class PluginServiceRegistrator : IPluginServiceRegistrator
+namespace Jellyfin.Plugin.FileTransformation
 {
-    public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
+    /// <summary>
+    /// Registers plugin services in the DI container.
+    /// Uses IStartupFilter to inject middleware.
+    /// </summary>
+    public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
-        // IStartupFilter — injects FileTransformationMiddleware before Jellyfin's pipeline.
-        // This replaces the Harmony-based Startup.Configure() patching.
-        serviceCollection.AddTransient<IStartupFilter, FileTransformationStartupFilter>();
+        public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
+        {
+            serviceCollection.AddTransient<IStartupFilter, FileTransformationStartupFilter>();
 
-        // Core transformation service (singleton, registered as both read and write interfaces)
-        serviceCollection.AddSingleton<WebFileTransformationService>();
-        serviceCollection.AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>());
-        serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
+            // Core transformation service (singleton, registered as both read and write interfaces)
+            serviceCollection.AddSingleton<WebFileTransformationService>();
+            serviceCollection.AddSingleton<IWebFileTransformationReadService>(s => s.GetRequiredService<WebFileTransformationService>());
+            serviceCollection.AddSingleton<IWebFileTransformationWriteService>(s => s.GetRequiredService<WebFileTransformationService>());
 
-        // Logger wrapper
-        serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
+            // Logger wrapper
+            serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
 
-        // Config version tracking for auto-refresh
-        serviceCollection.AddSingleton<ConfigVersionService>();
+            // Config version tracking for auto-refresh
+            serviceCollection.AddSingleton<ConfigVersionService>();
+        }
     }
 }
