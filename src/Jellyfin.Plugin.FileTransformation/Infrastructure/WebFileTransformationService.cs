@@ -7,11 +7,11 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 {
     public class WebFileTransformationService : IWebFileTransformationReadService, IWebFileTransformationWriteService
     {
-        private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan s_regexTimeout = TimeSpan.FromSeconds(2);
 
-        private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> m_fileTransformations = new();
-        private readonly ConcurrentDictionary<string, Regex> m_regexCache = new();
-        private readonly object m_pipelineLock = new();
+        private readonly ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>> m_fileTransformations = new ConcurrentDictionary<string, ICollection<(Guid TransformId, TransformFile Delegate)>>();
+        private readonly ConcurrentDictionary<string, Regex> m_regexCache = new ConcurrentDictionary<string, Regex>();
+        private readonly object m_pipelineLock = new object();
         private readonly ILogger<FileTransformationPlugin> m_logger;
 
         public WebFileTransformationService(IFileTransformationLogger logger)
@@ -19,14 +19,14 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             m_logger = logger;
         }
 
-        private static string NormalizePath(string path)
+        private string NormalizePath(string path)
         {
             return path.TrimStart('/');
         }
 
         private Regex GetOrCreateRegex(string pattern)
         {
-            return m_regexCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled, RegexTimeout));
+            return m_regexCache.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled, s_regexTimeout));
         }
 
         public bool NeedsTransformation(string path)

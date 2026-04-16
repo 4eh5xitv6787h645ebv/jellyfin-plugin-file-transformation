@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
 {
     public static class TransformationHelper
     {
-        private static readonly HttpClient SharedHttpClient = new()
+        private static readonly HttpClient s_sharedHttpClient = new HttpClient()
         {
             Timeout = TimeSpan.FromSeconds(15),
         };
@@ -138,7 +138,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                         requestUri = $"http://localhost:{serverApplicationHost.HttpPort}{payload.TransformationEndpoint}";
                     }
 
-                    HttpResponseMessage response = await SharedHttpClient
+                    HttpResponseMessage response = await s_sharedHttpClient
                         .PostAsync(requestUri, new StringContent(obj.ToString(Formatting.None), Encoding.UTF8, "application/json"))
                         .ConfigureAwait(false);
 

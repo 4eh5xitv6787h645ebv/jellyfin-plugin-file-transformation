@@ -22,15 +22,17 @@ This plugin is based on a Pull Request (https://github.com/jellyfin/jellyfin/pul
 
     <ItemGroup>
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-        <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
-        <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
-        <PackageReference Include="Jellyfin.Data" Version="$(JellyfinVersion)" />
-        <PackageReference Include="Jellyfin.Extensions" Version="$(JellyfinVersion)" />
+        <PackageReference Include="Jellyfin.Model" Version="$(JellyfinNugetVersion)" />
+        <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinNugetVersion)" />
+        <PackageReference Include="Jellyfin.Data" Version="$(JellyfinNugetVersion)" />
+        <PackageReference Include="Jellyfin.Extensions" Version="$(JellyfinNugetVersion)" />
     </ItemGroup>
 
     <ItemGroup>
         <None Remove="Configuration\config.html" />
         <EmbeddedResource Include="Configuration\config.html" />
+        <None Remove="Scripts\auto-refresh.js" />
+        <EmbeddedResource Include="Scripts\auto-refresh.js" />
     </ItemGroup>
 
     <ItemGroup>

@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Jellyfin.Plugin.FileTransformation.Configuration;
 using Jellyfin.Plugin.FileTransformation.Library;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
@@ -23,153 +25,18 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
     {
         private readonly RequestDelegate m_next;
 
-        private static string GetAutoRefreshScript(string mode, bool debug)
+        private string GetAutoRefreshScript(string mode, bool debug)
         {
-            return """
-            <script>
-            (function(){
-                var _ftVer=null,_ftMode='__FT_MODE__',_ftDebug=__FT_DEBUG__;
-                var _ftShown=false,_ftPending=false,_ftActScheduled=false;
-                var FT_MAX_RELOADS=3,FT_RELOAD_WINDOW=60000;
-                function ftLog(){if(_ftDebug)console.log.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
-                function ftDbg(){if(_ftDebug)console.debug.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
-                function ftIsHome(){
-                    var h=window.location.hash||'';
-                    return h===''||h==='#/'||h==='#/home.html'||h.indexOf('#/home')===0;
-                }
-                function ftCanReload(){
-                    var now=Date.now();
-                    var s=sessionStorage;
-                    var count=parseInt(s.getItem('ft_rl_c')||'0',10);
-                    var start=parseInt(s.getItem('ft_rl_s')||'0',10);
-                    if(now-start>FT_RELOAD_WINDOW){
-                        count=0;
-                        start=now;
-                    }
-                    count++;
-                    s.setItem('ft_rl_c',count);
-                    s.setItem('ft_rl_s',start);
-                    if(count>FT_MAX_RELOADS){
-                        ftLog('reload loop detected ('+count+' reloads in '+FT_RELOAD_WINDOW/1000+'s), stopping');
-                        return false;
-                    }
-                    return true;
-                }
-                function ftAct(){
-                    _ftActScheduled=false;
-                    if(_ftMode==='reload'){
-                        if(ftIsHome()){
-                            if(ftCanReload()){
-                                _ftPending=false;
-                                ftLog('on home, reloading now');
-                                window.location.reload();
-                            }else{
-                                _ftPending=false;
-                                if(!_ftShown){
-                                    _ftShown=true;
-                                    ftShowToast();
-                                }
-                            }
-                        }else if(!_ftShown){
-                            _ftShown=true;
-                            ftShowReloadToast();
-                        }
-                    }else if(_ftMode==='toast'){
-                        _ftPending=false;
-                        if(!_ftShown){
-                            _ftShown=true;
-                            ftShowToast();
-                        }
-                    }
-                }
-                function ftGetBase(){
-                    var p=window.location.pathname;
-                    var i=p.indexOf('/web');
-                    return i>0?p.substring(0,i):'';
-                }
-                function ftCheck(){
-                    var x=new XMLHttpRequest();
-                    x.open('GET',ftGetBase()+'/FileTransformation/config-version',true);
-                    x.onload=function(){
-                        if(x.status===200){
-                            try{
-                                var v=JSON.parse(x.responseText).version;
-                                if(_ftVer===null){_ftVer=v;ftDbg('init version:',v);return;}
-                                if(v!==_ftVer){
-                                    ftLog('version changed:',_ftVer,'->',v);
-                                    _ftVer=v;
-                                    _ftPending=true;
-                                    _ftShown=false;
-                                }
-                                if(_ftPending&&!_ftActScheduled){
-                                    ftDbg('pending=true, isHome='+ftIsHome()+', hash='+window.location.hash);
-                                    _ftActScheduled=true;
-                                    ftDbg('acting in 3s (waiting for plugins to process config)');
-                                    setTimeout(ftAct,3000);
-                                }
-                            }catch(e){ftLog('poll error:',e);}
-                        }
-                    };
-                    x.send();
-                }
-                function ftDismiss(el){el.remove();_ftShown=false;}
-                function ftShowReloadToast(){
-                    if(document.getElementById('ft-config-toast'))return;
-                    var d=document.createElement('div');
-                    d.id='ft-config-toast';
-                    d.style.cssText='position:fixed;bottom:1.5em;left:50%;transform:translateX(-50%);z-index:10000;background:#1e1e1e;color:#eee;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0.8em 1.2em;display:flex;align-items:center;gap:1em;font-family:inherit;font-size:0.95em;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
-                    var txt=document.createElement('span');
-                    txt.textContent='Settings changed. Will reload on home page.';
-                    d.appendChild(txt);
-                    var btn=document.createElement('button');
-                    btn.textContent='Reload Now';
-                    btn.style.cssText='background:#00a4dc;color:#fff;border:none;border-radius:4px;padding:0.4em 1em;cursor:pointer;font-size:0.9em;white-space:nowrap;';
-                    btn.onclick=function(){window.location.reload();};
-                    d.appendChild(btn);
-                    var close=document.createElement('button');
-                    close.textContent='\u00D7';
-                    close.style.cssText='background:none;border:none;color:#999;cursor:pointer;font-size:1.3em;padding:0 0.2em;line-height:1;';
-                    close.onclick=function(){ftDismiss(d);};
-                    d.appendChild(close);
-                    document.body.appendChild(d);
-                }
-                function ftShowToast(){
-                    if(document.getElementById('ft-config-toast'))return;
-                    var d=document.createElement('div');
-                    d.id='ft-config-toast';
-                    d.style.cssText='position:fixed;bottom:1.5em;left:50%;transform:translateX(-50%);z-index:10000;background:#1e1e1e;color:#eee;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0.8em 1.2em;display:flex;align-items:center;gap:1em;font-family:inherit;font-size:0.95em;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
-                    var txt=document.createElement('span');
-                    txt.textContent='Plugin settings changed. Refresh to apply.';
-                    d.appendChild(txt);
-                    var btn=document.createElement('button');
-                    btn.textContent='Refresh';
-                    btn.style.cssText='background:#00a4dc;color:#fff;border:none;border-radius:4px;padding:0.4em 1em;cursor:pointer;font-size:0.9em;white-space:nowrap;';
-                    btn.onclick=function(){window.location.reload();};
-                    d.appendChild(btn);
-                    var close=document.createElement('button');
-                    close.textContent='\u00D7';
-                    close.style.cssText='background:none;border:none;color:#999;cursor:pointer;font-size:1.3em;padding:0 0.2em;line-height:1;';
-                    close.onclick=function(){ftDismiss(d);};
-                    d.appendChild(close);
-                    document.body.appendChild(d);
-                }
-                function ftStart(){
-                    setInterval(function(){
-                        if(document.hidden)return;
-                        ftCheck();
-                    },5000);
-                    window.addEventListener('hashchange',function(){setTimeout(ftCheck,500);});
-                    window.addEventListener('focus',function(){setTimeout(ftCheck,500);});
-                    document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(ftCheck,500);});
-                }
-                if(document.readyState==='loading'){
-                    document.addEventListener('DOMContentLoaded',ftStart);
-                }else{
-                    ftStart();
-                }
-            })();
-            </script>
-            """.Replace("__FT_MODE__", mode).Replace("__FT_DEBUG__", debug ? "true" : "false");
+            string resourcePath = $"{typeof(FileTransformationPlugin).Namespace}.Scripts.auto-refresh.js";
+            Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
+            if (stream == null)
+            {
+                return string.Empty;
+            }
+
+            using StreamReader reader = new StreamReader(stream);
+            string script = reader.ReadToEnd();
+            return script.Replace("__FT_MODE__", mode).Replace("__FT_DEBUG__", debug ? "true" : "false");
         }
 
         public FileTransformationMiddleware(RequestDelegate next)
@@ -196,7 +63,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             // Extract the relative path after /web/
             // When path is "/web/" or "/web", resolve to "index.html" since
             // Jellyfin's UseDefaultFiles serves index.html for the root.
-            string relativePath = webIndex >= 0 ? path[(webIndex + 5)..] : string.Empty;
+            string relativePath = webIndex >= 0 ? path.Substring(webIndex + 5) : string.Empty;
             if (string.IsNullOrEmpty(relativePath))
             {
                 relativePath = "index.html";
@@ -204,10 +71,10 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 
             // Only intercept index.html for auto-refresh script injection when the feature is enabled.
             // For other paths, only intercept if a transformation is registered.
-            Configuration.ConfigChangeNotification notification = FileTransformationPlugin.Instance?.Configuration?.ConfigChangeNotification
-                ?? Configuration.ConfigChangeNotification.Toast;
+            ConfigChangeNotification notification = FileTransformationPlugin.Instance?.Configuration?.ConfigChangeNotification
+                ?? ConfigChangeNotification.Toast;
             bool isIndexHtml = string.Equals(relativePath, "index.html", StringComparison.OrdinalIgnoreCase)
-                && notification != Configuration.ConfigChangeNotification.Disabled;
+                && notification != ConfigChangeNotification.Disabled;
             bool needsTransform = readService.NeedsTransformation(relativePath);
 
             if (!isIndexHtml && !needsTransform)
@@ -216,7 +83,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 return;
             }
 
-            logger.LogDebug("[FileTransformation] Intercepting response for: {Path}", relativePath);
+            logger.LogDebug($"[FileTransformation] Intercepting response for: {relativePath}");
 
             // Save the client's Accept-Encoding before stripping — we'll re-compress after transforming.
             string acceptEncoding = context.Request.Headers.AcceptEncoding.ToString();
@@ -240,13 +107,12 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 bool isSynthesized = false;
                 if (context.Response.StatusCode == 404 && needsTransform)
                 {
-                    logger.LogDebug("[FileTransformation] Synthesizing virtual file for '{Path}'", relativePath);
+                    logger.LogDebug($"[FileTransformation] Synthesizing virtual file for '{relativePath}'");
                     isSynthesized = true;
                     bufferedBody.SetLength(0);
                     context.Response.StatusCode = 200;
 
-                    // Set content type from file extension using ASP.NET Core's built-in provider
-                    FileExtensionContentTypeProvider contentTypeProvider = new();
+                    FileExtensionContentTypeProvider contentTypeProvider = new FileExtensionContentTypeProvider();
                     if (contentTypeProvider.TryGetContentType(relativePath, out string? contentType))
                     {
                         context.Response.ContentType = contentType;
@@ -274,14 +140,14 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "[FileTransformation] Transformation pipeline failed for '{Path}'. Serving original content.", relativePath);
+                        logger.LogError(ex, $"[FileTransformation] Transformation pipeline failed for '{relativePath}'. Serving original content.");
                     }
 
                     // If this was a synthesized virtual file and the transforms produced nothing,
                     // revert to 404 instead of serving an empty 200.
                     if (isSynthesized && bufferedBody.Length == 0)
                     {
-                        logger.LogWarning("[FileTransformation] Virtual file synthesis for '{Path}' produced empty content, reverting to 404", relativePath);
+                        logger.LogWarning($"[FileTransformation] Virtual file synthesis for '{relativePath}' produced empty content, reverting to 404");
                         context.Response.StatusCode = 404;
                         context.Response.ContentLength = 0;
                         context.Response.Body = originalBody;
@@ -340,7 +206,6 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     string trimmed = entry.Trim();
                     string[] parts = trimmed.Split(';');
                     string token = parts[0].Trim();
-                    // Check for q=0 (exactly zero = "not accepted"). q=0.5, q=0.01 etc. are valid.
                     bool rejected = false;
                     for (int i = 1; i < parts.Length; i++)
                     {
@@ -348,6 +213,9 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                         if (param.StartsWith("q=", StringComparison.OrdinalIgnoreCase))
                         {
                             string qVal = param.Substring(2).Trim();
+                            // InvariantCulture is required here — HTTP quality values always use '.' as
+                            // the decimal separator per RFC 7231, but the default TryParse overload uses
+                            // the server's current culture which may use ',' (e.g. de-DE, fr-FR).
                             if (float.TryParse(qVal, NumberStyles.Float, CultureInfo.InvariantCulture, out float quality) && quality <= 0f)
                             {
                                 rejected = true;
@@ -390,7 +258,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             }
         }
 
-        private static string? SelectEncoding(HashSet<string> encodings)
+        private string? SelectEncoding(HashSet<string> encodings)
         {
             if (encodings.Contains("br"))
             {
@@ -405,7 +273,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             return null;
         }
 
-        private static Stream CreateCompressionStream(string encoding, Stream output)
+        private Stream CreateCompressionStream(string encoding, Stream output)
         {
             return encoding switch
             {
@@ -415,7 +283,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             };
         }
 
-        private static bool IsLocalRequest(HttpContext context)
+        private bool IsLocalRequest(HttpContext context)
         {
             IPAddress? remoteIp = context.Connection.RemoteIpAddress;
             if (remoteIp == null)
@@ -473,19 +341,19 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             return false;
         }
 
-        private static async Task InjectAutoRefreshScript(MemoryStream body)
+        private async Task InjectAutoRefreshScript(MemoryStream body)
         {
             FileTransformationPlugin? plugin = FileTransformationPlugin.Instance;
-            Configuration.ConfigChangeNotification notification = plugin?.Configuration?.ConfigChangeNotification
-                               ?? Configuration.ConfigChangeNotification.Toast;
+            ConfigChangeNotification notification = plugin?.Configuration?.ConfigChangeNotification
+                               ?? ConfigChangeNotification.Toast;
 
-            if (notification == Configuration.ConfigChangeNotification.Disabled)
+            if (notification == ConfigChangeNotification.Disabled)
             {
                 return;
             }
 
-            string mode = notification == Configuration.ConfigChangeNotification.AutoReload ? "reload" : "toast";
-            bool debug = plugin?.Configuration?.DebugLoggingState == Configuration.DebugLoggingState.Enabled;
+            string mode = notification == ConfigChangeNotification.AutoReload ? "reload" : "toast";
+            bool debug = plugin?.Configuration?.DebugLoggingState == DebugLoggingState.Enabled;
 
             body.Seek(0, SeekOrigin.Begin);
             using StreamReader reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: -1, leaveOpen: true);
@@ -498,6 +366,11 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             }
 
             string script = GetAutoRefreshScript(mode, debug);
+            if (string.IsNullOrEmpty(script))
+            {
+                return;
+            }
+
             string modified = string.Concat(html.AsSpan(0, insertPoint), script, html.AsSpan(insertPoint));
             byte[] bytes = Encoding.UTF8.GetBytes(modified);
 
