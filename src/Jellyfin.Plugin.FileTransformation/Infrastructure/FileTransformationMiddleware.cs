@@ -100,7 +100,10 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     return;
                 }
 
-                // Run the transformation pipeline
+                // Snapshot the original bytes so we can fall back to unmodified content
+                // if a transform throws partway through.
+                byte[] originalContent = bufferedBody.ToArray();
+
                 try
                 {
                     await readService.RunTransformation(relativePath, bufferedBody);
@@ -108,6 +111,9 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 catch (Exception ex)
                 {
                     logger.LogError(ex, $"[FileTransformation] Transformation pipeline failed for '{relativePath}'. Serving original content.");
+                    bufferedBody.SetLength(0);
+                    await bufferedBody.WriteAsync(originalContent);
+                    bufferedBody.Seek(0, SeekOrigin.Begin);
                 }
 
                 // If this was a synthesized virtual file and the transforms produced nothing,
@@ -185,20 +191,35 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 }
 
                 string? selectedEncoding = isLocal ? null : SelectEncoding(encodings);
+                bool compressed = false;
                 if (selectedEncoding != null)
                 {
-                    using MemoryStream compressed = new MemoryStream();
-                    using (Stream compressor = CreateCompressionStream(selectedEncoding, compressed))
+                    // Defensive: if a future encoding is added to SelectEncoding without a matching
+                    // CreateCompressionStream case, fall back to uncompressed instead of failing the
+                    // response. Better for users than a broken /web/ page.
+                    try
                     {
-                        await bufferedBody.CopyToAsync(compressor);
-                    }
+                        using MemoryStream compressedBuffer = new MemoryStream();
+                        using (Stream compressor = CreateCompressionStream(selectedEncoding, compressedBuffer))
+                        {
+                            await bufferedBody.CopyToAsync(compressor);
+                        }
 
-                    context.Response.Headers[HeaderNames.ContentEncoding] = selectedEncoding;
-                    context.Response.ContentLength = compressed.Length;
-                    compressed.Seek(0, SeekOrigin.Begin);
-                    await compressed.CopyToAsync(originalBody);
+                        context.Response.Headers[HeaderNames.ContentEncoding] = selectedEncoding;
+                        context.Response.ContentLength = compressedBuffer.Length;
+                        compressedBuffer.Seek(0, SeekOrigin.Begin);
+                        // Set before the write to originalBody — once the response starts flushing to
+                        // the client we cannot fall back to uncompressed without sending garbled bytes.
+                        compressed = true;
+                        await compressedBuffer.CopyToAsync(originalBody);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, $"[FileTransformation] Compression as '{selectedEncoding}' failed for '{relativePath}', serving uncompressed");
+                    }
                 }
-                else
+
+                if (!compressed)
                 {
                     context.Response.ContentLength = bufferedBody.Length;
                     await bufferedBody.CopyToAsync(originalBody);
