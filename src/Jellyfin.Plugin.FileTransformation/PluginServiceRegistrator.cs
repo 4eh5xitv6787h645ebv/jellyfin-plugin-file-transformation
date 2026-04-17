@@ -7,10 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.FileTransformation
 {
-    /// <summary>
-    /// Registers plugin services in the DI container.
-    /// Uses IStartupFilter to inject middleware.
-    /// </summary>
     public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)

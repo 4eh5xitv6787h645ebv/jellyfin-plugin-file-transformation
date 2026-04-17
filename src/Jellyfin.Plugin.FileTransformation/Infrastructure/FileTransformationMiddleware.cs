@@ -13,21 +13,13 @@ using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 {
-    /// <summary>
-    /// ASP.NET Core middleware that intercepts responses for /web/ paths and runs
-    /// registered file transformations on the response body.
-    ///
-    /// Handles both text (HTML, JS, CSS) and binary (images, icons) transformations
-    /// by working with raw Stream objects — the same TransformFile delegate signature
-    /// used by the original PhysicalTransformedFileProvider approach.
-    /// </summary>
     public sealed class FileTransformationMiddleware
     {
         private readonly RequestDelegate m_next;
 
         private string GetAutoRefreshScript(string mode, bool debug)
         {
-            string resourcePath = $"{typeof(FileTransformationPlugin).Namespace}.Scripts.auto-refresh.js";
+            string resourcePath = $"{typeof(FileTransformationPlugin).Namespace}.Script.auto-refresh.js";
             Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
             if (stream == null)
             {
@@ -56,7 +48,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             int webIndex = path.IndexOf("/web/", StringComparison.OrdinalIgnoreCase);
             if (webIndex < 0 && !path.EndsWith("/web", StringComparison.OrdinalIgnoreCase))
             {
-                await m_next(context).ConfigureAwait(false);
+                await m_next(context);
                 return;
             }
 
@@ -79,7 +71,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 
             if (!isIndexHtml && !needsTransform)
             {
-                await m_next(context).ConfigureAwait(false);
+                await m_next(context);
                 return;
             }
 
@@ -98,7 +90,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 
             try
             {
-                await m_next(context).ConfigureAwait(false);
+                await m_next(context);
 
                 // Virtual file synthesis: if a transform is registered for a file that
                 // doesn't exist on disk (404), create an empty response and let the
@@ -127,7 +119,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     // Non-200 response with no transform registered — pass through
                     bufferedBody.Seek(0, SeekOrigin.Begin);
                     context.Response.Body = originalBody;
-                    await bufferedBody.CopyToAsync(context.Response.Body).ConfigureAwait(false);
+                    await bufferedBody.CopyToAsync(context.Response.Body);
                     return;
                 }
 
@@ -136,7 +128,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 {
                     try
                     {
-                        await readService.RunTransformation(relativePath, bufferedBody).ConfigureAwait(false);
+                        await readService.RunTransformation(relativePath, bufferedBody);
                     }
                     catch (Exception ex)
                     {
@@ -160,7 +152,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 {
                     try
                     {
-                        await InjectAutoRefreshScript(bufferedBody).ConfigureAwait(false);
+                        await InjectAutoRefreshScript(bufferedBody);
                     }
                     catch (Exception ex)
                     {
@@ -171,7 +163,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 // Compute ETag from the transformed content so browsers can do conditional requests.
                 // This brings back 304 responses for unchanged transformed content.
                 bufferedBody.Seek(0, SeekOrigin.Begin);
-                byte[] hashBytes = await SHA256.HashDataAsync(bufferedBody).ConfigureAwait(false);
+                byte[] hashBytes = await SHA256.HashDataAsync(bufferedBody);
                 string etag = $"\"{BitConverter.ToString(hashBytes, 0, 8).Replace("-", string.Empty).ToLowerInvariant()}\"";
 
                 // Check If-None-Match — return 304 if content hasn't changed
@@ -237,18 +229,18 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     using MemoryStream compressed = new MemoryStream();
                     using (Stream compressor = CreateCompressionStream(selectedEncoding, compressed))
                     {
-                        await bufferedBody.CopyToAsync(compressor).ConfigureAwait(false);
+                        await bufferedBody.CopyToAsync(compressor);
                     }
 
                     context.Response.Headers[HeaderNames.ContentEncoding] = selectedEncoding;
                     context.Response.ContentLength = compressed.Length;
                     compressed.Seek(0, SeekOrigin.Begin);
-                    await compressed.CopyToAsync(originalBody).ConfigureAwait(false);
+                    await compressed.CopyToAsync(originalBody);
                 }
                 else
                 {
                     context.Response.ContentLength = bufferedBody.Length;
-                    await bufferedBody.CopyToAsync(originalBody).ConfigureAwait(false);
+                    await bufferedBody.CopyToAsync(originalBody);
                 }
             }
             catch
@@ -357,7 +349,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 
             body.Seek(0, SeekOrigin.Begin);
             using StreamReader reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: -1, leaveOpen: true);
-            string html = await reader.ReadToEndAsync().ConfigureAwait(false);
+            string html = await reader.ReadToEndAsync();
 
             int insertPoint = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
             if (insertPoint < 0)
@@ -376,7 +368,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 
             body.SetLength(0);
             body.Seek(0, SeekOrigin.Begin);
-            await body.WriteAsync(bytes).ConfigureAwait(false);
+            await body.WriteAsync(bytes);
         }
     }
 }

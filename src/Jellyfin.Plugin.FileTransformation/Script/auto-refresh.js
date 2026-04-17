@@ -1,10 +1,10 @@
 <script>
 (function(){
-    var _ftVer=null,_ftMode='__FT_MODE__',_ftDebug=__FT_DEBUG__;
-    var _ftShown=false,_ftPending=false,_ftActScheduled=false;
+    var ftVer=null,ftMode='__FT_MODE__',ftDebug=__FT_DEBUG__;
+    var ftShown=false,ftPending=false,ftActScheduled=false;
     var FT_MAX_RELOADS=3,FT_RELOAD_WINDOW=60000;
-    function ftLog(){if(_ftDebug)console.log.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
-    function ftDbg(){if(_ftDebug)console.debug.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
+    function ftLog(){if(ftDebug)console.log.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
+    function ftDbg(){if(ftDebug)console.debug.apply(console,['[FT]'].concat(Array.prototype.slice.call(arguments)));}
     function ftIsHome(){
         var h=window.location.hash||'';
         return h===''||h==='#/'||h==='#/home.html'||h.indexOf('#/home')===0;
@@ -28,28 +28,28 @@
         return true;
     }
     function ftAct(){
-        _ftActScheduled=false;
-        if(_ftMode==='reload'){
+        ftActScheduled=false;
+        if(ftMode==='reload'){
             if(ftIsHome()){
                 if(ftCanReload()){
-                    _ftPending=false;
+                    ftPending=false;
                     ftLog('on home, reloading now');
                     window.location.reload();
                 }else{
-                    _ftPending=false;
-                    if(!_ftShown){
-                        _ftShown=true;
+                    ftPending=false;
+                    if(!ftShown){
+                        ftShown=true;
                         ftShowToast();
                     }
                 }
-            }else if(!_ftShown){
-                _ftShown=true;
+            }else if(!ftShown){
+                ftShown=true;
                 ftShowReloadToast();
             }
-        }else if(_ftMode==='toast'){
-            _ftPending=false;
-            if(!_ftShown){
-                _ftShown=true;
+        }else if(ftMode==='toast'){
+            ftPending=false;
+            if(!ftShown){
+                ftShown=true;
                 ftShowToast();
             }
         }
@@ -66,16 +66,16 @@
             if(x.status===200){
                 try{
                     var v=JSON.parse(x.responseText).version;
-                    if(_ftVer===null){_ftVer=v;ftDbg('init version:',v);return;}
-                    if(v!==_ftVer){
-                        ftLog('version changed:',_ftVer,'->',v);
-                        _ftVer=v;
-                        _ftPending=true;
-                        _ftShown=false;
+                    if(ftVer===null){ftVer=v;ftDbg('init version:',v);return;}
+                    if(v!==ftVer){
+                        ftLog('version changed:',ftVer,'->',v);
+                        ftVer=v;
+                        ftPending=true;
+                        ftShown=false;
                     }
-                    if(_ftPending&&!_ftActScheduled){
+                    if(ftPending&&!ftActScheduled){
                         ftDbg('pending=true, isHome='+ftIsHome()+', hash='+window.location.hash);
-                        _ftActScheduled=true;
+                        ftActScheduled=true;
                         ftDbg('acting in 3s (waiting for plugins to process config)');
                         setTimeout(ftAct,3000);
                     }
@@ -84,7 +84,7 @@
         };
         x.send();
     }
-    function ftDismiss(el){el.remove();_ftShown=false;}
+    function ftDismiss(el){el.remove();ftShown=false;}
     function ftShowReloadToast(){
         if(document.getElementById('ft-config-toast'))return;
         var d=document.createElement('div');

@@ -46,12 +46,12 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 }
                 catch (RegexMatchTimeoutException)
                 {
-                    m_logger.LogWarning("[FileTransformation] Regex timeout matching pattern '{Pattern}' against '{Path}'", key, path);
+                    m_logger.LogWarning($"[FileTransformation] Regex timeout matching pattern '{key}' against '{path}'");
                     return false;
                 }
                 catch (ArgumentException ex)
                 {
-                    m_logger.LogWarning(ex, "[FileTransformation] Invalid regex pattern '{Pattern}'", key);
+                    m_logger.LogWarning(ex, $"[FileTransformation] Invalid regex pattern '{key}'");
                     return false;
                 }
             });
@@ -80,7 +80,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     }
                     catch (Exception ex) when (ex is RegexMatchTimeoutException or ArgumentException)
                     {
-                        m_logger.LogWarning(ex, "[FileTransformation] Regex error for pattern '{Pattern}'", k);
+                        m_logger.LogWarning(ex, $"[FileTransformation] Regex error for pattern '{k}'");
                         return false;
                     }
                 });
@@ -108,13 +108,11 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 try
                 {
                     stream.Seek(0, SeekOrigin.Begin);
-                    await action(path, stream).ConfigureAwait(false);
+                    await action(path, stream);
                 }
                 catch (Exception ex)
                 {
-                    m_logger.LogError(ex,
-                        "[FileTransformation] Transform {TransformId} failed for '{Path}'. Continuing with next.",
-                        transformId, path);
+                    m_logger.LogError(ex, $"[FileTransformation] Transform {transformId} failed for '{path}'. Continuing with next.");
                 }
             }
 
@@ -127,7 +125,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             ArgumentNullException.ThrowIfNull(transformation);
 
             path = NormalizePath(path);
-            m_logger.LogInformation("[FileTransformation] Registering transformation for '{Path}' (ID: {Id})", path, id);
+            m_logger.LogInformation($"[FileTransformation] Registering transformation for '{path}' (ID: {id})");
 
             lock (m_pipelineLock)
             {

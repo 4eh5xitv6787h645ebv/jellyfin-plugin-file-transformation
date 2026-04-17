@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 
 namespace Jellyfin.Plugin.FileTransformation.Attributes
 {
@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.FileTransformation.Attributes
     public class JellyfinVersionAttribute : Attribute
     {
         public string Version { get; set; }
-
+        
         public JellyfinVersionAttribute(string version)
         {
             Version = version;

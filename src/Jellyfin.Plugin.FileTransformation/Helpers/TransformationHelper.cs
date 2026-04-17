@@ -19,18 +19,18 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
 
         public static async Task ApplyTransformation(string path, Stream contents, TransformationRegistrationPayload payload, ILogger logger, IServerApplicationHost serverApplicationHost)
         {
-            logger.LogDebug("[FileTransformation] Transformation requested for {Path}", path);
+            logger.LogDebug($"[FileTransformation] Transformation requested for {path}");
 
             // Validate that at least one callback mechanism is configured
             if (payload.CallbackAssembly == null && payload.TransformationPipe == null
                 && string.IsNullOrEmpty(payload.TransformationEndpoint))
             {
-                logger.LogWarning("[FileTransformation] No callback configured for {Path}, skipping", path);
+                logger.LogWarning($"[FileTransformation] No callback configured for {path}, skipping");
                 return;
             }
 
             using StreamReader reader = new StreamReader(contents, leaveOpen: true);
-            JObject obj = new JObject { { "contents", await reader.ReadToEndAsync().ConfigureAwait(false) } };
+            JObject obj = new JObject { { "contents", await reader.ReadToEndAsync() } };
 
             string? transformedString = null;
 
@@ -45,28 +45,28 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
 
                     if (assembly == null)
                     {
-                        logger.LogWarning("[FileTransformation] Assembly '{Assembly}' not found for {Path}", payload.CallbackAssembly, path);
+                        logger.LogWarning($"[FileTransformation] Assembly '{payload.CallbackAssembly}' not found for {path}");
                         return;
                     }
 
                     Type? type = assembly.GetType(payload.CallbackClass!);
                     if (type == null)
                     {
-                        logger.LogWarning("[FileTransformation] Type '{Type}' not found in assembly for {Path}", payload.CallbackClass, path);
+                        logger.LogWarning($"[FileTransformation] Type '{payload.CallbackClass}' not found in assembly for {path}");
                         return;
                     }
 
                     MethodInfo? method = type.GetMethod(payload.CallbackMethod!);
                     if (method == null)
                     {
-                        logger.LogWarning("[FileTransformation] Method '{Method}' not found on type for {Path}", payload.CallbackMethod, path);
+                        logger.LogWarning($"[FileTransformation] Method '{payload.CallbackMethod}' not found on type for {path}");
                         return;
                     }
 
                     ParameterInfo[] parameters = method.GetParameters();
                     if (parameters.Length == 0)
                     {
-                        logger.LogWarning("[FileTransformation] Callback method has no parameters for {Path}", path);
+                        logger.LogWarning($"[FileTransformation] Callback method has no parameters for {path}");
                         return;
                     }
 
@@ -75,7 +75,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "[FileTransformation] Assembly callback failed for {Path}", path);
+                    logger.LogError(ex, $"[FileTransformation] Assembly callback failed for {path}");
                     return;
                 }
             }
@@ -86,20 +86,20 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                 try
                 {
                     await using NamedPipeClientStream pipe = new NamedPipeClientStream(".", payload.TransformationPipe, PipeDirection.InOut);
-                    await pipe.ConnectAsync(5000).ConfigureAwait(false);
+                    await pipe.ConnectAsync(5000);
 
                     byte[] payloadBytes = Encoding.UTF8.GetBytes(obj.ToString(Formatting.None));
                     byte[] payloadLengthBytes = BitConverter.GetBytes((long)payloadBytes.Length);
-                    await pipe.WriteAsync(payloadLengthBytes).ConfigureAwait(false);
-                    await pipe.WriteAsync(payloadBytes).ConfigureAwait(false);
+                    await pipe.WriteAsync(payloadLengthBytes);
+                    await pipe.WriteAsync(payloadBytes);
 
                     byte[] lengthBuffer = new byte[8];
-                    await pipe.ReadExactlyAsync(lengthBuffer, 0, lengthBuffer.Length).ConfigureAwait(false);
+                    await pipe.ReadExactlyAsync(lengthBuffer, 0, lengthBuffer.Length);
                     long length = BitConverter.ToInt64(lengthBuffer, 0);
 
                     if (length <= 0 || length > 50 * 1024 * 1024)
                     {
-                        logger.LogError("[FileTransformation] Invalid pipe response length ({Length} bytes) for {Path}", length, path);
+                        logger.LogError($"[FileTransformation] Invalid pipe response length ({length} bytes) for {path}");
                         return;
                     }
 
@@ -107,7 +107,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                     while (length > 0)
                     {
                         byte[] buffer = new byte[Math.Min(8192, length)];
-                        int bytesRead = await pipe.ReadAsync(buffer).ConfigureAwait(false);
+                        int bytesRead = await pipe.ReadAsync(buffer);
                         if (bytesRead == 0)
                         {
                             throw new EndOfStreamException($"Pipe closed prematurely, {length} bytes remaining");
@@ -121,7 +121,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "[FileTransformation] Named pipe callback failed for {Path}", path);
+                    logger.LogError(ex, $"[FileTransformation] Named pipe callback failed for {path}");
                     return;
                 }
             }
@@ -139,20 +139,19 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
                     }
 
                     HttpResponseMessage response = await s_sharedHttpClient
-                        .PostAsync(requestUri, new StringContent(obj.ToString(Formatting.None), Encoding.UTF8, "application/json"))
-                        .ConfigureAwait(false);
+                        .PostAsync(requestUri, new StringContent(obj.ToString(Formatting.None), Encoding.UTF8, "application/json"));
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        logger.LogError("[FileTransformation] HTTP callback returned {Status} for {Path}", (int)response.StatusCode, path);
+                        logger.LogError($"[FileTransformation] HTTP callback returned {(int)response.StatusCode} for {path}");
                         return;
                     }
 
-                    transformedString = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    transformedString = await response.Content.ReadAsStringAsync();
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "[FileTransformation] HTTP callback failed for {Path}", path);
+                    logger.LogError(ex, $"[FileTransformation] HTTP callback failed for {path}");
                     return;
                 }
             }
@@ -166,7 +165,7 @@ namespace Jellyfin.Plugin.FileTransformation.Helpers
             contents.Seek(0, SeekOrigin.Begin);
             using StreamWriter textWriter = new StreamWriter(contents, null, -1, leaveOpen: true);
             textWriter.Write(transformedString);
-            await textWriter.FlushAsync().ConfigureAwait(false);
+            await textWriter.FlushAsync();
             contents.SetLength(contents.Position);
         }
     }

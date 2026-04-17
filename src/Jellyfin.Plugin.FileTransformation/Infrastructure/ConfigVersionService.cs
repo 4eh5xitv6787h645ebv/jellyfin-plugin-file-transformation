@@ -3,11 +3,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.FileTransformation.Infrastructure
 {
-    /// <summary>
-    /// Tracks a monotonic version counter that increments whenever plugin
-    /// configurations change on disk. The frontend polls this to know when
-    /// a soft reload is needed.
-    /// </summary>
     public sealed class ConfigVersionService : IDisposable
     {
         private readonly ILogger<ConfigVersionService> m_logger;
@@ -22,7 +17,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             string? configPath = appPaths.PluginConfigurationsPath;
             if (string.IsNullOrEmpty(configPath) || !Directory.Exists(configPath))
             {
-                m_logger.LogWarning("[FileTransformation] Config path '{Path}' not found, auto-refresh disabled", configPath ?? "(null)");
+                m_logger.LogWarning($"[FileTransformation] Config path '{configPath ?? "(null)"}' not found, auto-refresh disabled");
                 return;
             }
 
@@ -37,7 +32,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             m_watcher.Created += OnConfigChanged;
             m_watcher.Error += OnWatcherError;
 
-            m_logger.LogInformation("[FileTransformation] Config version watcher active on: {Path}", configPath);
+            m_logger.LogInformation($"[FileTransformation] Config version watcher active on: {configPath}");
         }
 
         public long Version => Interlocked.Read(ref m_version);
@@ -45,7 +40,7 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
         private void OnConfigChanged(object sender, FileSystemEventArgs e)
         {
             long newVersion = Interlocked.Increment(ref m_version);
-            m_logger.LogInformation("[FileTransformation] Config change detected ({File}), version now {Version}", e.Name, newVersion);
+            m_logger.LogInformation($"[FileTransformation] Config change detected ({e.Name}), version now {newVersion}");
         }
 
         private void OnWatcherError(object sender, ErrorEventArgs e)

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <JellyfinVersion>10.11.0</JellyfinVersion>
+        <JellyfinVersion>10.11.3</JellyfinVersion>
         <JellyfinNugetVersion Condition="!$(JellyfinVersion.StartsWith('10.11'))">$(JellyfinVersion)</JellyfinNugetVersion>
         <JellyfinNugetVersion Condition="$(JellyfinVersion.StartsWith('10.11'))">$(JellyfinVersion)</JellyfinNugetVersion>
         <JellyfinNugetVersion Condition="$(JellyfinVersion.StartsWith('10.11.1'))">10.11.0</JellyfinNugetVersion>
@@ -21,7 +21,7 @@ This plugin is based on a Pull Request (https://github.com/jellyfin/jellyfin/pul
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
         <PackageReference Include="Jellyfin.Model" Version="$(JellyfinNugetVersion)" />
         <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinNugetVersion)" />
         <PackageReference Include="Jellyfin.Data" Version="$(JellyfinNugetVersion)" />
@@ -31,8 +31,8 @@ This plugin is based on a Pull Request (https://github.com/jellyfin/jellyfin/pul
     <ItemGroup>
         <None Remove="Configuration\config.html" />
         <EmbeddedResource Include="Configuration\config.html" />
-        <None Remove="Scripts\auto-refresh.js" />
-        <EmbeddedResource Include="Scripts\auto-refresh.js" />
+        <None Remove="Script\auto-refresh.js" />
+        <EmbeddedResource Include="Script\auto-refresh.js" />
     </ItemGroup>
 
     <ItemGroup>
