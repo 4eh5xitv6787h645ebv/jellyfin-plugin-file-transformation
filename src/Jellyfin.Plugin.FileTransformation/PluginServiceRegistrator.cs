@@ -20,6 +20,9 @@ namespace Jellyfin.Plugin.FileTransformation
 
             // Logger wrapper
             serviceCollection.AddSingleton<IFileTransformationLogger, FileTransformationLogger>();
+
+            // Config version tracking for auto-refresh
+            serviceCollection.AddSingleton<ConfigVersionService>();
         }
     }
 }

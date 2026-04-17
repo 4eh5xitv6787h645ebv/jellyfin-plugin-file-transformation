@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
+using Jellyfin.Plugin.FileTransformation.Configuration;
 using Jellyfin.Plugin.FileTransformation.Library;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
@@ -13,6 +16,20 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
     public sealed class FileTransformationMiddleware
     {
         private readonly RequestDelegate m_next;
+
+        private string GetAutoRefreshScript(string mode, bool debug)
+        {
+            string resourcePath = $"{typeof(FileTransformationPlugin).Namespace}.Script.auto-refresh.js";
+            Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
+            if (stream == null)
+            {
+                return string.Empty;
+            }
+
+            using StreamReader reader = new StreamReader(stream);
+            string script = reader.ReadToEnd();
+            return script.Replace("__FT_MODE__", mode).Replace("__FT_DEBUG__", debug ? "true" : "false");
+        }
 
         public FileTransformationMiddleware(RequestDelegate next)
         {
@@ -44,9 +61,15 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                 relativePath = "index.html";
             }
 
+            // Only intercept index.html for auto-refresh script injection when the feature is enabled.
+            // For other paths, only intercept if a transformation is registered.
+            ConfigChangeNotification notification = FileTransformationPlugin.Instance?.Configuration?.ConfigChangeNotification
+                ?? ConfigChangeNotification.Toast;
+            bool isIndexHtml = string.Equals(relativePath, "index.html", StringComparison.OrdinalIgnoreCase)
+                && notification != ConfigChangeNotification.Disabled;
             bool needsTransform = readService.NeedsTransformation(relativePath);
 
-            if (!needsTransform)
+            if (!isIndexHtml && !needsTransform)
             {
                 await m_next(context);
                 return;
@@ -100,25 +123,41 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
                     return;
                 }
 
-                // Run the transformation pipeline
-                try
+                // Run the transformation pipeline (only if transforms are registered)
+                if (needsTransform)
                 {
-                    await readService.RunTransformation(relativePath, bufferedBody);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, $"[FileTransformation] Transformation pipeline failed for '{relativePath}'. Serving original content.");
+                    try
+                    {
+                        await readService.RunTransformation(relativePath, bufferedBody);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, $"[FileTransformation] Transformation pipeline failed for '{relativePath}'. Serving original content.");
+                    }
+
+                    // If this was a synthesized virtual file and the transforms produced nothing,
+                    // revert to 404 instead of serving an empty 200.
+                    if (isSynthesized && bufferedBody.Length == 0)
+                    {
+                        logger.LogWarning($"[FileTransformation] Virtual file synthesis for '{relativePath}' produced empty content, reverting to 404");
+                        context.Response.StatusCode = 404;
+                        context.Response.ContentLength = 0;
+                        context.Response.Body = originalBody;
+                        return;
+                    }
                 }
 
-                // If this was a synthesized virtual file and the transforms produced nothing,
-                // revert to 404 instead of serving an empty 200.
-                if (isSynthesized && bufferedBody.Length == 0)
+                // For index.html, inject the auto-refresh script after all transforms
+                if (isIndexHtml)
                 {
-                    logger.LogWarning($"[FileTransformation] Virtual file synthesis for '{relativePath}' produced empty content, reverting to 404");
-                    context.Response.StatusCode = 404;
-                    context.Response.ContentLength = 0;
-                    context.Response.Body = originalBody;
-                    return;
+                    try
+                    {
+                        await InjectAutoRefreshScript(bufferedBody);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "[FileTransformation] Failed to inject auto-refresh script");
+                    }
                 }
 
                 // Compute ETag from the transformed content so browsers can do conditional requests.
@@ -292,6 +331,44 @@ namespace Jellyfin.Plugin.FileTransformation.Infrastructure
             }
 
             return false;
+        }
+
+        private async Task InjectAutoRefreshScript(MemoryStream body)
+        {
+            FileTransformationPlugin? plugin = FileTransformationPlugin.Instance;
+            ConfigChangeNotification notification = plugin?.Configuration?.ConfigChangeNotification
+                               ?? ConfigChangeNotification.Toast;
+
+            if (notification == ConfigChangeNotification.Disabled)
+            {
+                return;
+            }
+
+            string mode = notification == ConfigChangeNotification.AutoReload ? "reload" : "toast";
+            bool debug = plugin?.Configuration?.DebugLoggingState == DebugLoggingState.Enabled;
+
+            body.Seek(0, SeekOrigin.Begin);
+            using StreamReader reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: -1, leaveOpen: true);
+            string html = await reader.ReadToEndAsync();
+
+            int insertPoint = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+            if (insertPoint < 0)
+            {
+                return;
+            }
+
+            string script = GetAutoRefreshScript(mode, debug);
+            if (string.IsNullOrEmpty(script))
+            {
+                return;
+            }
+
+            string modified = string.Concat(html.AsSpan(0, insertPoint), script, html.AsSpan(insertPoint));
+            byte[] bytes = Encoding.UTF8.GetBytes(modified);
+
+            body.SetLength(0);
+            body.Seek(0, SeekOrigin.Begin);
+            await body.WriteAsync(bytes);
         }
     }
 }

@@ -31,6 +31,8 @@ This plugin is based on a Pull Request (https://github.com/jellyfin/jellyfin/pul
     <ItemGroup>
         <None Remove="Configuration\config.html" />
         <EmbeddedResource Include="Configuration\config.html" />
+        <None Remove="Script\auto-refresh.js" />
+        <EmbeddedResource Include="Script\auto-refresh.js" />
     </ItemGroup>
 
     <ItemGroup>
