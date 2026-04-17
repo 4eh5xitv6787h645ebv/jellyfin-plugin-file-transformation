@@ -62,6 +62,9 @@
     function ftCheck(){
         var x=new XMLHttpRequest();
         x.open('GET',ftGetBase()+'/FileTransformation/config-version',true);
+        x.timeout=4000;
+        x.ontimeout=function(){ftDbg('poll timeout');};
+        x.onerror=function(){ftDbg('poll network error');};
         x.onload=function(){
             if(x.status===200){
                 try{
